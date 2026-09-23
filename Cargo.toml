@@ -1,0 +1,12 @@
+[package]
+name = "ag_blackout"
+version = "0.1.0"
+edition = "2024"
+authors = ["B1structor", "AnalogicGoose"]
+description = "AG: Blackout - Terminal/TUI Hacking Simulator built on AG Linux"
+
+[dependencies]
+ratatui = "0.26"
+crossterm = "0.27"
+anyhow = "1.0"
+thiserror = "1.0"
