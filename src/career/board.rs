@@ -2,7 +2,7 @@ use thiserror::Error;
 
 use crate::filesystem::VirtualPath;
 
-use super::contract::{ Contract, ContractStatus };
+use super::contract::{ Contract, ContractStatus, Objective };
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum ContractError {
@@ -14,8 +14,8 @@ pub enum ContractError {
 
 /// The board: contracts posted, accepted, and completed. Resolution is a
 /// simple synchronous check — no event bus — matching docs/GAME_DESIGN.md:
-/// the CLI calls `record_read` after a qualifying action (currently: `cat`)
-/// and gets back whichever contracts that action just completed.
+/// the CLI calls `record_download` after a qualifying action (currently:
+/// `download`) and gets back whichever contracts that action just completed.
 #[derive(Default)]
 pub struct ContractBoard {
     contracts: Vec<Contract>,
@@ -63,15 +63,37 @@ impl ContractBoard {
         &self.contracts
     }
 
-    /// Marks any *active* contract targeting `(hostname, path)` as
-    /// completed. Returns the contracts that were just completed, so the
-    /// caller can pay out their reward.
-    pub fn record_read(&mut self, hostname: &str, path: &VirtualPath) -> Vec<Contract> {
+    /// Marks any *active* `ObtainResource` contract targeting `(hostname,
+    /// path)` as completed. Returns the contracts that were just completed,
+    /// so the caller can pay out their reward.
+    pub fn record_download(&mut self, hostname: &str, path: &VirtualPath) -> Vec<Contract> {
         let mut completed = Vec::new();
         for contract in self.contracts.iter_mut() {
-            if contract.status == ContractStatus::Active && contract.target_hostname == hostname && &contract.resource_path == path {
+            if contract.status == ContractStatus::Active
+                && contract.target_hostname == hostname
+                && &contract.resource_path == path
+                && matches!(contract.objective, Objective::ObtainResource)
+            {
                 contract.status = ContractStatus::Completed;
                 completed.push(contract.clone());
+            }
+        }
+        completed
+    }
+
+    /// Marks any *active* `ModifyResource` contract targeting `(hostname,
+    /// path)` as completed if `new_content` now matches what it requires.
+    pub fn record_modify(&mut self, hostname: &str, path: &VirtualPath, new_content: &[u8]) -> Vec<Contract> {
+        let mut completed = Vec::new();
+        for contract in self.contracts.iter_mut() {
+            if contract.status != ContractStatus::Active || contract.target_hostname != hostname || &contract.resource_path != path {
+                continue;
+            }
+            if let Objective::ModifyResource { required_content } = &contract.objective {
+                if required_content.as_slice() == new_content {
+                    contract.status = ContractStatus::Completed;
+                    completed.push(contract.clone());
+                }
             }
         }
         completed
@@ -87,7 +109,19 @@ mod tests {
     }
 
     fn sample() -> Contract {
-        Contract::new("Get the report", "target01", path("/home/finance/report.pdf"), 3000)
+        Contract::directed("Get the report", "target01", path("/home/finance/report.pdf"), 3000, "guest", "guest", Objective::ObtainResource)
+    }
+
+    fn sample_modify(required_content: &[u8]) -> Contract {
+        Contract::directed(
+            "Plant the log entry",
+            "target01",
+            path("/home/finance/report.pdf"),
+            3000,
+            "guest",
+            "guest",
+            Objective::ModifyResource { required_content: required_content.to_vec() },
+        )
     }
 
     #[test]
@@ -131,14 +165,14 @@ mod tests {
     }
 
     #[test]
-    fn record_read_only_resolves_active_contracts() {
+    fn record_download_only_resolves_active_contracts() {
         let mut board = ContractBoard::new();
         let id = board.post(sample());
         // still just Available, not accepted yet — must not resolve
-        assert!(board.record_read("target01", &path("/home/finance/report.pdf")).is_empty());
+        assert!(board.record_download("target01", &path("/home/finance/report.pdf")).is_empty());
 
         board.accept(id).unwrap();
-        let completed = board.record_read("target01", &path("/home/finance/report.pdf"));
+        let completed = board.record_download("target01", &path("/home/finance/report.pdf"));
         assert_eq!(completed.len(), 1);
         assert_eq!(completed[0].reward, 3000);
         assert_eq!(board.active().count(), 0);
@@ -146,13 +180,13 @@ mod tests {
     }
 
     #[test]
-    fn record_read_ignores_non_matching_reads() {
+    fn record_download_ignores_non_matching_reads() {
         let mut board = ContractBoard::new();
         let id = board.post(sample());
         board.accept(id).unwrap();
 
-        assert!(board.record_read("target01", &path("/etc/hostname")).is_empty());
-        assert!(board.record_read("other-host", &path("/home/finance/report.pdf")).is_empty());
+        assert!(board.record_download("target01", &path("/etc/hostname")).is_empty());
+        assert!(board.record_download("other-host", &path("/home/finance/report.pdf")).is_empty());
         assert_eq!(board.active().count(), 1);
     }
 
@@ -161,8 +195,43 @@ mod tests {
         let mut board = ContractBoard::new();
         let id = board.post(sample());
         board.accept(id).unwrap();
-        board.record_read("target01", &path("/home/finance/report.pdf"));
+        board.record_download("target01", &path("/home/finance/report.pdf"));
 
-        assert!(board.record_read("target01", &path("/home/finance/report.pdf")).is_empty());
+        assert!(board.record_download("target01", &path("/home/finance/report.pdf")).is_empty());
+    }
+
+    #[test]
+    fn record_download_ignores_a_modify_resource_contract() {
+        let mut board = ContractBoard::new();
+        let id = board.post(sample_modify(b"whatever"));
+        board.accept(id).unwrap();
+
+        assert!(board.record_download("target01", &path("/home/finance/report.pdf")).is_empty());
+        assert_eq!(board.active().count(), 1);
+    }
+
+    #[test]
+    fn record_modify_only_resolves_on_matching_content() {
+        let mut board = ContractBoard::new();
+        let id = board.post(sample_modify(b"planted"));
+        board.accept(id).unwrap();
+
+        assert!(board.record_modify("target01", &path("/home/finance/report.pdf"), b"wrong content").is_empty());
+        assert_eq!(board.active().count(), 1);
+
+        let completed = board.record_modify("target01", &path("/home/finance/report.pdf"), b"planted");
+        assert_eq!(completed.len(), 1);
+        assert_eq!(board.active().count(), 0);
+        assert_eq!(board.completed().count(), 1);
+    }
+
+    #[test]
+    fn record_modify_ignores_an_obtain_resource_contract() {
+        let mut board = ContractBoard::new();
+        let id = board.post(sample());
+        board.accept(id).unwrap();
+
+        assert!(board.record_modify("target01", &path("/home/finance/report.pdf"), b"anything").is_empty());
+        assert_eq!(board.active().count(), 1);
     }
 }

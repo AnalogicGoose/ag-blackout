@@ -1,3 +1,5 @@
+use crate::career::{Contract, Lead};
+
 use super::super::output::CommandOutput;
 use super::super::session::Shell;
 
@@ -27,7 +29,7 @@ fn list(shell: &Shell) -> String {
     if !available.is_empty() {
         out.push_str("Available:\n");
         for c in &available {
-            out.push_str(&format!("  [{}] {} — {} — ${}\n", c.id, c.title, c.target_hostname, c.reward));
+            out.push_str(&format!("  [{}] {} — {} — ${}\n", c.id, c.title, briefing(c), c.reward));
         }
     }
 
@@ -35,7 +37,7 @@ fn list(shell: &Shell) -> String {
     if !active.is_empty() {
         out.push_str("Active:\n");
         for c in &active {
-            out.push_str(&format!("  [{}] {} — {}\n", c.id, c.title, c.target_hostname));
+            out.push_str(&format!("  [{}] {} — {}\n", c.id, c.title, briefing(c)));
         }
     }
 
@@ -53,16 +55,40 @@ fn list(shell: &Shell) -> String {
     out
 }
 
+/// What a contract's listing discloses about its target. A `Directed` lead
+/// hands over the hostname and login outright; a `Guided` lead only names
+/// the `Organization` and hint, never the resolved hostname — the player has
+/// to discover it themselves. See docs/GAME_DESIGN.md's Slice 2 section.
+fn briefing(c: &Contract) -> String {
+    match &c.lead {
+        Lead::Directed { username, password } => format!("{} — login: {username}/{password}", c.target_hostname),
+        Lead::Guided { organization, hint } => format!("org: {organization} — hint: {hint}"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::super::test_support::guest_shell;
-    use crate::career::Contract;
+    use crate::career::{Contract, Objective};
     use crate::filesystem::VirtualPath;
     use crate::shell::Shell;
 
     fn with_one_posted_job(shell: &mut Shell) -> u32 {
         let path = VirtualPath::resolve(&VirtualPath::root(), "/home/finance/report.pdf").unwrap();
-        shell.contracts.post(Contract::new("Get the report", "target01", path, 3000))
+        shell.contracts.post(Contract::directed("Get the report", "target01", path, 3000, "guest", "guest", Objective::ObtainResource))
+    }
+
+    fn with_one_guided_job(shell: &mut Shell) -> u32 {
+        let path = VirtualPath::resolve(&VirtualPath::root(), "/home/analyst/customers.csv").unwrap();
+        shell.contracts.post(Contract::guided(
+            "Obtain the customer database",
+            "corp-db01",
+            path,
+            7500,
+            "Meridian Analytics",
+            "Operates in Managua, Nicaragua.",
+            Objective::ObtainResource,
+        ))
     }
 
     #[test]
@@ -72,6 +98,19 @@ mod tests {
         let out = shell.execute_line("contracts").stdout;
         assert!(out.contains("Available:"));
         assert!(out.contains("Get the report"));
+        assert!(out.contains("login: guest/guest"));
+    }
+
+    #[test]
+    fn guided_contracts_disclose_the_organization_and_hint_but_never_the_hostname() {
+        let mut shell = guest_shell();
+        with_one_guided_job(&mut shell);
+        let out = shell.execute_line("contracts").stdout;
+        assert!(out.contains("Obtain the customer database"));
+        assert!(out.contains("org: Meridian Analytics"));
+        assert!(out.contains("hint: Operates in Managua, Nicaragua."));
+        assert!(!out.contains("corp-db01"));
+        assert!(!out.contains("login:"));
     }
 
     #[test]

@@ -1,24 +1,30 @@
 use std::collections::HashMap;
 
-use crate::career::{ContractBoard, Economy};
+use crate::career::{Career, ContractBoard, Economy};
 use crate::filesystem::VirtualPath;
 use crate::system::ExecutionContext;
-use crate::world::{Device, Network};
+use crate::world::{Device, Network, OrganizationRegistry};
 
 use super::builtins::{self, CommandFn};
 use super::output::{CommandOutput, LineResult};
 use super::parser::{self, RedirectKind, Redirection};
 
-/// A logged-in shell session. Owns the player's world (`Network`) and career
-/// state (`ContractBoard`, `Economy`) — those persist across `connect`/
-/// `disconnect` — plus which device the session is currently attached to and
-/// the identity it's authenticated as there. `execute_line` is the one entry
-/// point — parse a raw line, run its pipeline against whichever device is
-/// active, return what would be printed.
+/// A logged-in shell session. Owns the player's world (`Network`,
+/// `OrganizationRegistry`) and career state (`ContractBoard`, `Economy`,
+/// `Career`) — those persist across `connect`/`disconnect` — plus which
+/// device the session is currently attached to and the identity it's
+/// authenticated as there. `execute_line` is the one entry point — parse a
+/// raw line, run its pipeline against whichever device is active, return
+/// what would be printed. `Career` (holding `Knowledge`) is a distinct field
+/// rather than something `Shell` computes or owns outright — see
+/// docs/GAME_DESIGN.md's Slice 2 section on why `Knowledge` doesn't belong
+/// directly on session state.
 pub struct Shell {
     pub network: Network,
+    pub organizations: OrganizationRegistry,
     pub economy: Economy,
     pub contracts: ContractBoard,
+    pub career: Career,
     pub context: ExecutionContext,
     local_hostname: String,
     active_hostname: String,
@@ -38,8 +44,10 @@ impl Shell {
             .expect("local_hostname must be registered in network and initial_uid must exist on it");
         Shell {
             network,
+            organizations: OrganizationRegistry::new(),
             economy: Economy::new(),
             contracts: ContractBoard::new(),
+            career: Career::new(),
             context: local_context.clone(),
             active_hostname: local_hostname.clone(),
             local_hostname,
@@ -60,6 +68,18 @@ impl Shell {
 
     pub fn active_device_mut(&mut self) -> &mut Device {
         self.network.get_mut(&self.active_hostname).expect("active_hostname always names a registered device")
+    }
+
+    /// If the active device has a `CredentialLead` at exactly `path`, records
+    /// it into `career.knowledge` — called after a successful read (`cat`)
+    /// of that path. Reading is otherwise a plain filesystem operation; this
+    /// is the one place a read has a side effect beyond its own output. See
+    /// docs/GAME_DESIGN.md's Slice 2 section.
+    pub fn note_credential_leads_at(&mut self, path: &VirtualPath) {
+        let host = self.active_hostname.clone();
+        let Some(lead) = self.active_device().credential_leads.iter().find(|lead| &lead.path == path) else { return };
+        let (username, password) = (lead.username.clone(), lead.password.clone());
+        self.career.knowledge.record_credential(username, password, host);
     }
 
     pub fn is_connected_remotely(&self) -> bool {
@@ -90,6 +110,78 @@ impl Shell {
         self.active_hostname = self.local_hostname.clone();
         self.context = self.local_context.clone();
         Ok(())
+    }
+
+    /// The local session's cwd — where a relative `local_path` argument to
+    /// `download` resolves against, independent of wherever `context.cwd`
+    /// currently points on a connected remote device.
+    pub fn local_cwd(&self) -> &VirtualPath {
+        &self.local_context.cwd
+    }
+
+    /// `download`'s actual logic: reads `remote_path` off the currently
+    /// active (must be remote) device and writes its bytes into the local
+    /// device at `local_path`. If `local_path` names an existing local
+    /// directory, the file is placed inside it under the remote file's
+    /// basename (matching `cp`/`scp`'s "directory destination" behavior,
+    /// rather than overwriting the directory's own name with the file); with
+    /// no `local_path` at all, it lands under the local identity's home
+    /// directory the same way. This — not `cat` — is what "obtaining a
+    /// resource" means for a contract now (see docs/GAME_DESIGN.md):
+    /// proof-of-access alone no longer pays out, the file has to actually
+    /// make it home.
+    pub fn download(&mut self, remote_path: &VirtualPath, local_path: Option<&VirtualPath>) -> Result<VirtualPath, String> {
+        if !self.is_connected_remotely() {
+            return Err("not connected to a remote host".to_string());
+        }
+
+        let remote_access = self.context.fs_access();
+        let contents = self
+            .active_device_mut()
+            .filesystem
+            .read_file(&remote_access, remote_path)
+            .map_err(|e| format!("{remote_path}: {e}"))?;
+
+        let local_access = self.local_context.fs_access();
+        let local_path = match local_path {
+            Some(p) => {
+                let is_dir = self.network.get(&self.local_hostname).expect("local_hostname always names a registered device")
+                    .filesystem
+                    .is_dir(&local_access, p)
+                    .unwrap_or(false);
+                if is_dir {
+                    let filename = remote_path
+                        .file_name()
+                        .ok_or_else(|| format!("{remote_path}: no filename to save"))?;
+                    p.join(filename)
+                } else {
+                    p.clone()
+                }
+            }
+            None => {
+                let filename = remote_path
+                    .file_name()
+                    .ok_or_else(|| format!("{remote_path}: no filename to save"))?;
+                let home = self.local_context.env.get("HOME").expect("every context has HOME").clone();
+                VirtualPath::resolve(&VirtualPath::root(), &home)
+                    .expect("HOME is always a valid absolute path")
+                    .join(filename)
+            }
+        };
+        let local_hostname = self.local_hostname.clone();
+        self.network
+            .get_mut(&local_hostname)
+            .expect("local_hostname always names a registered device")
+            .filesystem
+            .write_file(&local_access, &local_path, &contents)
+            .map_err(|e| format!("{local_path}: {e}"))?;
+
+        let remote_host = self.active_hostname.clone();
+        for contract in self.contracts.record_download(&remote_host, remote_path) {
+            self.economy.deposit(contract.reward);
+        }
+
+        Ok(local_path)
     }
 
     pub fn execute_line(&mut self, input: &str) -> LineResult {
@@ -152,8 +244,16 @@ impl Shell {
         } else {
             stdout.as_bytes().to_vec()
         };
-        if let Err(e) = self.active_device_mut().filesystem.write_file(&access, &path, &bytes) {
-            stderr_acc.push_str(&format!("ag-shell: {}: {e}\n", redir.target));
+        match self.active_device_mut().filesystem.write_file(&access, &path, &bytes) {
+            Ok(()) => {
+                // A `ModifyResource` contract is satisfied by overwriting its
+                // resource with the required bytes — see docs/GAME_DESIGN.md.
+                let host = self.active_hostname.clone();
+                for contract in self.contracts.record_modify(&host, &path, &bytes) {
+                    self.economy.deposit(contract.reward);
+                }
+            }
+            Err(e) => stderr_acc.push_str(&format!("ag-shell: {}: {e}\n", redir.target)),
         }
     }
 
@@ -163,10 +263,10 @@ impl Shell {
 
     fn run_command(&mut self, argv: &[String], stdin: Option<&str>) -> CommandOutput {
         let Some(name) = argv.first() else { return CommandOutput::empty_ok() };
-        match self.builtins.get(name.as_str()).copied() {
-            Some(f) => f(self, &argv[1..], stdin),
-            None => CommandOutput::error(format!("ag-shell: {name}: command not found\n")),
-        }
+        let Some(f) = self.builtins.get(name.as_str()).copied() else {
+            return CommandOutput::error(format!("ag-shell: {name}: command not found\n"));
+        };
+        f(self, &argv[1..], stdin)
     }
 }
 
@@ -258,5 +358,75 @@ mod tests {
     fn disconnect_without_a_connection_fails() {
         let mut shell = guest_shell();
         assert!(shell.disconnect().is_err());
+    }
+
+    #[test]
+    fn download_requires_being_connected_remotely() {
+        let mut shell = guest_shell();
+        let path = crate::filesystem::VirtualPath::resolve(&crate::filesystem::VirtualPath::root(), "/home/guest/x.txt").unwrap();
+        assert!(shell.download(&path, None).is_err());
+    }
+
+    #[test]
+    fn download_copies_the_remote_file_home_and_resolves_a_matching_contract() {
+        use crate::career::Contract;
+        use crate::filesystem::{FsAccess, VirtualPath};
+
+        let mut shell = guest_shell();
+        let mut target = crate::world::Device::new("target01");
+        let remote_path = VirtualPath::resolve(&VirtualPath::root(), "/home/guest/report.pdf").unwrap();
+        target.filesystem.write_file(&FsAccess::root(), &remote_path, b"confidential").unwrap();
+        shell.network.register(target);
+
+        let id = shell.contracts.post(Contract::directed("Get the report", "target01", remote_path.clone(), 3000, "guest", "guest", crate::career::Objective::ObtainResource));
+        shell.contracts.accept(id).unwrap();
+        shell.connect("target01", "guest", "guest").unwrap();
+
+        let local_path = shell.download(&remote_path, None).unwrap();
+        assert_eq!(local_path.to_string(), "/home/guest/report.pdf");
+        assert_eq!(shell.economy.balance(), 3000);
+        assert_eq!(shell.contracts.completed().count(), 1);
+
+        shell.disconnect().unwrap();
+        assert_eq!(shell.execute_line("cat /home/guest/report.pdf").stdout, "confidential");
+    }
+
+    #[test]
+    fn download_honors_an_explicit_local_path() {
+        use crate::filesystem::{FsAccess, VirtualPath};
+
+        let mut shell = guest_shell();
+        let mut target = crate::world::Device::new("target01");
+        let remote_path = VirtualPath::resolve(&VirtualPath::root(), "/home/guest/report.pdf").unwrap();
+        target.filesystem.write_file(&FsAccess::root(), &remote_path, b"confidential").unwrap();
+        shell.network.register(target);
+        shell.connect("target01", "guest", "guest").unwrap();
+
+        let local_path = VirtualPath::resolve(&VirtualPath::root(), "/tmp/loot.pdf").unwrap();
+        let saved = shell.download(&remote_path, Some(&local_path)).unwrap();
+        assert_eq!(saved, local_path);
+
+        shell.disconnect().unwrap();
+        assert_eq!(shell.execute_line("cat /tmp/loot.pdf").stdout, "confidential");
+    }
+
+    #[test]
+    fn download_into_an_existing_local_directory_keeps_the_remote_basename() {
+        use crate::filesystem::{FsAccess, VirtualPath};
+
+        let mut shell = guest_shell();
+        let mut target = crate::world::Device::new("target01");
+        let remote_path = VirtualPath::resolve(&VirtualPath::root(), "/home/guest/report.pdf").unwrap();
+        target.filesystem.write_file(&FsAccess::root(), &remote_path, b"confidential").unwrap();
+        shell.network.register(target);
+        shell.connect("target01", "guest", "guest").unwrap();
+
+        // /tmp already exists as a directory in the default tree.
+        let local_dir = VirtualPath::resolve(&VirtualPath::root(), "/tmp").unwrap();
+        let saved = shell.download(&remote_path, Some(&local_dir)).unwrap();
+        assert_eq!(saved.to_string(), "/tmp/report.pdf");
+
+        shell.disconnect().unwrap();
+        assert_eq!(shell.execute_line("cat /tmp/report.pdf").stdout, "confidential");
     }
 }

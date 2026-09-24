@@ -1,6 +1,5 @@
 use std::collections::BTreeMap;
 use std::fmt;
-
 use crate::filesystem::VirtualPath;
 
 use super::context::ExecutionContext;
@@ -195,6 +194,18 @@ impl UserDatabase {
     pub fn authenticate(&self, username: &str, attempt: &str) -> Option<u32> {
         let user = self.user_by_name(username)?;
         user.password.verify(attempt).then_some(user.uid)
+    }
+
+    /// Adds a distinct account beyond the four seeded ones — its own
+    /// primary group (gid == uid), home `/home/<username>`, and a settable
+    /// password. Used to give a target device its own credential instead of
+    /// reusing `guest`/`guest` (see docs/GAME_DESIGN.md's Slice 1 status).
+    pub fn add_account(&mut self, uid: u32, username: impl Into<String>, password: &str) -> VirtualPath {
+        let username = username.into();
+        let home = VirtualPath::resolve(&VirtualPath::root(), &format!("/home/{username}")).unwrap();
+        self.add_group(Group::new(uid, username.clone()));
+        self.add_user(User::new(uid, username, uid, vec![], home.clone(), "/bin/bash", PasswordState::set(password)));
+        home
     }
 }
 

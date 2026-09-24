@@ -31,6 +31,11 @@ pub struct Service {
     pub owner_uid: u32,
     pub state: ServiceState,
     pub pid: Option<u32>,
+    /// Flavor/informational only for now — the smallest change needed for
+    /// `scan` to show "nginx 1.18.0" once `nmap` is installed. See
+    /// docs/GAME_DESIGN.md's Slice 2 section: a version is information, not
+    /// a vulnerability check.
+    pub version: String,
 }
 
 /// Services as system state (Section 14): starting/stopping one starts/stops
@@ -43,17 +48,24 @@ pub struct ServiceRegistry {
 impl ServiceRegistry {
     pub fn new(processes: &mut ProcessTable) -> Self {
         let mut registry = ServiceRegistry { services: BTreeMap::new() };
-        registry.seed_running(processes, "sshd", "sshd", 0);
-        registry.seed_running(processes, "cron", "cron", 0);
-        registry.seed_running(processes, "nginx", "nginx", WWW_DATA_UID);
+        registry.seed_running(processes, "sshd", "sshd", 0, "9.3");
+        registry.seed_running(processes, "cron", "cron", 0, "3.0pl1");
+        registry.seed_running(processes, "nginx", "nginx", WWW_DATA_UID, "1.18.0");
         registry
     }
 
-    fn seed_running(&mut self, processes: &mut ProcessTable, name: &str, command: &str, owner_uid: u32) {
+    fn seed_running(&mut self, processes: &mut ProcessTable, name: &str, command: &str, owner_uid: u32, version: &str) {
         let pid = processes.spawn(1, owner_uid, command);
         self.services.insert(
             name.to_string(),
-            Service { name: name.to_string(), command: command.to_string(), owner_uid, state: ServiceState::Running, pid: Some(pid) },
+            Service {
+                name: name.to_string(),
+                command: command.to_string(),
+                owner_uid,
+                state: ServiceState::Running,
+                pid: Some(pid),
+                version: version.to_string(),
+            },
         );
     }
 

@@ -6,6 +6,7 @@ mod navigation;
 mod network;
 mod process;
 mod contracts;
+mod recon;
 
 use std::collections::HashMap;
 
@@ -52,6 +53,10 @@ pub fn table() -> HashMap<&'static str, CommandFn> {
     m.insert("agpkg", agpkg::agpkg);
     m.insert("connect", network::connect);
     m.insert("disconnect", network::disconnect);
+    m.insert("download", network::download);
     m.insert("contracts", contracts::contracts);
+    m.insert("whois", recon::whois);
+    m.insert("scan", recon::scan);
+    m.insert("intel", recon::intel);
     m
 }

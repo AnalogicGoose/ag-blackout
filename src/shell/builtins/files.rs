@@ -4,13 +4,15 @@ use super::super::output::CommandOutput;
 use super::super::session::Shell;
 use super::split_flags;
 
+/// A plain read — unlike `download`, this never resolves a contract. See
+/// docs/GAME_DESIGN.md: proof-of-access alone doesn't pay out anymore, the
+/// resource has to actually be brought home.
 pub fn cat(shell: &mut Shell, args: &[String], stdin: Option<&str>) -> CommandOutput {
     if args.is_empty() {
         return CommandOutput::ok(stdin.unwrap_or_default().to_string());
     }
     let mut out = String::new();
     let mut err = String::new();
-    let mut read_paths = Vec::new();
     for arg in args {
         let path = match VirtualPath::resolve(&shell.context.cwd, arg) {
             Ok(p) => p,
@@ -23,18 +25,9 @@ pub fn cat(shell: &mut Shell, args: &[String], stdin: Option<&str>) -> CommandOu
         match shell.active_device_mut().filesystem.read_file(&access, &path) {
             Ok(bytes) => {
                 out.push_str(&String::from_utf8_lossy(&bytes));
-                read_paths.push(path);
+                shell.note_credential_leads_at(&path);
             }
             Err(e) => err.push_str(&format!("cat: {arg}: {e}\n")),
-        }
-    }
-
-    // A successful read is what "obtaining a resource" means for Slice 1's
-    // proof-of-access model — see docs/GAME_DESIGN.md.
-    let host = shell.active_hostname().to_string();
-    for path in &read_paths {
-        for contract in shell.contracts.record_read(&host, path) {
-            shell.economy.deposit(contract.reward);
         }
     }
 
@@ -192,9 +185,6 @@ fn two_path_op(
 #[cfg(test)]
 mod tests {
     use super::super::super::test_support::guest_shell;
-    use crate::career::Contract;
-    use crate::filesystem::VirtualPath;
-    use crate::world::Device;
 
     #[test]
     fn cat_reads_file_content() {
@@ -255,25 +245,30 @@ mod tests {
         assert_eq!(shell.execute_line("cat /home/guest/new.txt").exit_code, 0);
     }
 
-    /// The full Slice 1 loop: accept a contract, connect to the target with
-    /// the credentials it hands over, read the resource, verify it resolved
-    /// and paid out.
+    /// `cat` is proof-of-access only now — it must never resolve a contract
+    /// by itself. Bringing the file home is `download`'s job (see
+    /// docs/GAME_DESIGN.md and shell::builtins::network::tests for that
+    /// full loop).
     #[test]
-    fn reading_the_contracted_resource_on_the_target_resolves_it_and_pays_out() {
+    fn cat_alone_never_pays_out_a_contract() {
+        use crate::career::Contract;
+        use crate::filesystem::{FsAccess, VirtualPath};
+        use crate::world::Device;
+
         let mut shell = guest_shell();
         let mut target = Device::new("target01");
-        let access = crate::filesystem::FsAccess::root();
+        let access = FsAccess::root();
         let path = VirtualPath::resolve(&VirtualPath::root(), "/home/guest/report.pdf").unwrap();
         target.filesystem.write_file(&access, &path, b"confidential").unwrap();
         shell.network.register(target);
 
-        let id = shell.contracts.post(Contract::new("Get the report", "target01", path.clone(), 3000));
+        let id = shell.contracts.post(Contract::directed("Get the report", "target01", path.clone(), 3000, "guest", "guest", crate::career::Objective::ObtainResource));
         shell.execute_line(&format!("contracts accept {id}"));
 
         shell.execute_line("connect target01 guest guest");
         let result = shell.execute_line("cat /home/guest/report.pdf");
         assert_eq!(result.stdout, "confidential");
-        assert_eq!(shell.economy.balance(), 3000);
-        assert_eq!(shell.contracts.active().count(), 0);
+        assert_eq!(shell.economy.balance(), 0);
+        assert_eq!(shell.contracts.active().count(), 1);
     }
 }
