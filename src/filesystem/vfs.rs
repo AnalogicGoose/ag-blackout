@@ -174,6 +174,18 @@ impl VirtualFS {
         Ok(self.get(&resolved)?.metadata.clone())
     }
 
+    /// Whether `path` is a directory the caller may `cd` into — needs execute
+    /// (search) on the target itself, deliberately not read, matching real
+    /// `chdir(2)`: you can `cd` into a directory you can't `ls`.
+    pub fn is_dir(&self, access: &FsAccess, path: &VirtualPath) -> Result<bool, FsError> {
+        let resolved = self.resolve_path(access, path, true)?;
+        let node = self.get(&resolved)?;
+        if node.is_dir() {
+            Self::check_access(access, node, AccessMode::Execute)?;
+        }
+        Ok(node.is_dir())
+    }
+
     pub fn read_file(&self, access: &FsAccess, path: &VirtualPath) -> Result<Vec<u8>, FsError> {
         let resolved = self.resolve_path(access, path, true)?;
         let node = self.get(&resolved)?;
@@ -457,6 +469,12 @@ impl VirtualFS {
 
         self.chown(&root_access, &p("root"), ROOT_UID, ROOT_GID).unwrap();
         self.chmod(&root_access, &p("root"), Mode::new(0o700)).unwrap();
+
+        // World-writable so any user can drop scratch files there, matching
+        // real /tmp. We don't model the sticky bit yet (Mode is 9 bits, no
+        // "only the owner may delete their own file here" protection) — fine
+        // for now, worth revisiting if that distinction ever matters for gameplay.
+        self.chmod(&root_access, &p("tmp"), Mode::new(0o777)).unwrap();
     }
 }
 
