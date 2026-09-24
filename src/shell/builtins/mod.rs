@@ -3,6 +3,7 @@ mod files;
 mod identity;
 mod navigation;
 mod process;
+mod agpkg;
 
 use std::collections::HashMap;
 
@@ -46,5 +47,6 @@ pub fn table() -> HashMap<&'static str, CommandFn> {
     m.insert("kill", process::kill);
     m.insert("service", process::service);
     m.insert("logs", process::logs);
+    m.insert("agpkg", agpkg::agpkg);
     m
 }

@@ -33,7 +33,16 @@ src/
 │   ├── registry.rs            # UserDatabase — seeded accounts, lookups, id/whoami
 │   ├── context.rs              # ExecutionContext — identity + cwd + env, bridges to FsAccess
 │   ├── sudoers.rs               # Sudoers — who may sudo
-│   └── privilege.rs              # su() / sudo() / PrivilegeError
+│   ├── privilege.rs              # su() / sudo() / PrivilegeError
+│   ├── process.rs                 # Process, ProcessTable (spawn/kill, pid 1 = ag-init)
+│   ├── service.rs                  # Service, ServiceRegistry (start/stop, root-gated)
+│   └── log.rs                       # LogEntry, LogBook — in-memory only, see below
+├── package/
+│   ├── mod.rs
+│   ├── manifest.rs          # PackageManifest (name, version, description, deps)
+│   ├── repository.rs         # Repository — the static embedded AGPKG catalog
+│   ├── installed.rs           # InstalledPackage, InstalledDatabase
+│   └── manager.rs               # PackageManager — install/remove/update/upgrade
 └── shell/
     ├── mod.rs
     ├── parser.rs            # tokenizer + pipeline/redirection parsing
@@ -45,10 +54,12 @@ src/
         ├── navigation.rs          # pwd, cd, ls
         ├── files.rs                # cat, touch, mkdir, rm, cp, mv
         ├── identity.rs              # whoami, id, groups
-        └── env.rs                    # echo, env, export, which
+        ├── env.rs                    # echo, env, export, which
+        ├── process.rs                  # ps, kill, service, logs
+        └── agpkg.rs                      # agpkg search/install/remove/update/upgrade/list/info
 ```
 
-`network/`, `package/` and `ui/` don't exist yet — they land in later phases (see below).
+`network/` and `ui/` don't exist yet — they land in later phases (see below).
 
 ## ExecutionContext
 
@@ -82,7 +93,10 @@ Seeded by `UserDatabase::new()`:
 - **`su`'s `login` flag is a plain `bool`**, not real `-`/`--login` flag parsing.
 - **`su`/`sudo` are still not shell builtins.** They need an interactive password prompt (hidden input, multi-turn), which has nowhere to live without a UI loop — Ratatui/Crossterm are still completely unused; `main.rs` only prints the boot banner. Revisit once there's an actual terminal loop.
 - **No command chaining (`;`, `&&`, `||`), no globbing, no backslash escaping** in the shell parser — not needed yet, easy to add later without restructuring.
-- **`PATH`/`which` are mostly flavor.** There's no AGPKG yet (Phase 6), so there are no real installed binaries to search for — `which` just reports a synthetic `/bin/<name>` for known builtins.
+- **`PATH`/`which` are mostly flavor.** `which` only knows about shell builtins, not AGPKG-installed packages — AGPKG doesn't write anything into `VirtualFS` (no real binary files show up under `/usr/bin`), it's purely an in-memory `InstalledDatabase`. Same reasoning as `/proc`/logs below: no read-back path exists yet to make that worthwhile.
+- **`/proc` is not synthesized.** Real dynamic procfs content needs a `Node` variant that generates content on read; `NodeKind` only holds static bytes. `ps` covers the actual ask (Phase 5); revisit if something needs `cat /proc/<pid>/...` specifically.
+- **System logs (`kill`, `service`, `agpkg`) live in an in-memory `LogBook`, not `/var/log`.** No simulated clock exists to timestamp them meaningfully in-world, and nothing reads log files back off disk yet either.
+- **AGPKG's catalog and `/etc/agpkg/repos.conf` are unrelated**, same pattern as `/etc/sudoers`: the repo file written by Phase 1 is flavor text, `package::Repository` is a separate static embedded catalog. No real network fetches (Section 16 says not to implement those anyway).
 
 ## Development phases
 
@@ -90,8 +104,8 @@ Seeded by `UserDatabase::new()`:
 2. **Users** — ✅ done. `User`/`Group`/`UserDatabase` with the four seeded accounts above, `whoami`/`id`/`groups` query logic (`IdInfo` + `Display`), password hashing (FNV-1a, not real crypto — this is a simulation), `ExecutionContext`.
 3. **Privileges** — ✅ done. `Sudoers` policy (root + `%sudo` group), `su` (verifies target's password, root bypasses), `sudo` (verifies caller's own password after a sudoers check, keeps caller's cwd). `chmod`/`chown` needed no new work — already correct in `VirtualFS` since Phase 1.
 4. **Shell** — ✅ done. Parser (quoting, `$VAR` expansion, pipes, `>`/`>>`/`<`), `Shell::execute_line`, builtins for navigation/files/identity/env.
-5. **System** — *(next)* processes, services, `/proc`, `ps`, `kill`, logs.
-6. **AGPKG** — package database, repositories, dependencies, package commands.
+5. **System** — ✅ done. `ProcessTable` (pid 1 = unkillable `ag-init`, owner-or-root `kill`), `ServiceRegistry` (sshd/cron/nginx, root-gated start/stop tied to a backing process), `ps`/`kill`/`service`/`logs` builtins, in-memory `LogBook`.
+6. **AGPKG** — ✅ done. Static embedded `Repository` (8 packages, dependency chains), `InstalledDatabase`, `PackageManager` (dependency-resolving install, dependent-blocked remove, root-gated everything), one `agpkg` builtin with 7 subcommands.
 7. **Gameplay systems** (later) — vulnerabilities, exploits, privilege escalation mechanics, persistence, objectives, missions, narrative.
 
-We are currently starting Phase 5.
+We are currently starting Phase 7.

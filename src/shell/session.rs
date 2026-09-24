@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use crate::filesystem::{VirtualFS, VirtualPath};
+use crate::package::PackageManager;
 use crate::system::{ExecutionContext, LogBook, ProcessTable, ServiceRegistry, Sudoers, UserDatabase};
 
 use super::builtins::{self, CommandFn};
@@ -8,9 +9,9 @@ use super::output::{CommandOutput, LineResult};
 use super::parser::{self, RedirectKind, Redirection};
 
 /// A logged-in shell session: identity, the machine's filesystem, user
-/// database and process/service state, and the command table. `execute_line`
-/// is the one entry point — parse a raw line, run its pipeline, return what
-/// would be printed.
+/// database, process/service state and package manager, and the command
+/// table. `execute_line` is the one entry point — parse a raw line, run its
+/// pipeline, return what would be printed.
 pub struct Shell {
     pub context: ExecutionContext,
     pub filesystem: VirtualFS,
@@ -19,6 +20,7 @@ pub struct Shell {
     pub processes: ProcessTable,
     pub services: ServiceRegistry,
     pub logs: LogBook,
+    pub packages: PackageManager,
     builtins: HashMap<&'static str, CommandFn>,
 }
 
@@ -30,8 +32,19 @@ impl Shell {
         context: ExecutionContext,
         processes: ProcessTable,
         services: ServiceRegistry,
+        packages: PackageManager,
     ) -> Self {
-        Shell { context, filesystem, users, sudoers, processes, services, logs: LogBook::default(), builtins: builtins::table() }
+        Shell {
+            context,
+            filesystem,
+            users,
+            sudoers,
+            processes,
+            services,
+            packages,
+            logs: LogBook::default(),
+            builtins: builtins::table(),
+        }
     }
 
     pub fn has_builtin(&self, name: &str) -> bool {
