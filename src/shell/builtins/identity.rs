@@ -2,35 +2,37 @@ use super::super::output::CommandOutput;
 use super::super::session::Shell;
 
 pub fn whoami(shell: &mut Shell, _args: &[String], _stdin: Option<&str>) -> CommandOutput {
-    match shell.users.whoami(shell.context.uid) {
+    match shell.active_device().users.whoami(shell.context.uid) {
         Some(name) => CommandOutput::ok(format!("{name}\n")),
         None => CommandOutput::error("whoami: cannot find username\n"),
     }
 }
 
 pub fn id(shell: &mut Shell, args: &[String], _stdin: Option<&str>) -> CommandOutput {
+    let users = &shell.active_device().users;
     let uid = match args.first() {
-        Some(name) => match shell.users.user_by_name(name) {
+        Some(name) => match users.user_by_name(name) {
             Some(u) => u.uid,
             None => return CommandOutput::error(format!("id: '{name}': no such user\n")),
         },
         None => shell.context.uid,
     };
-    match shell.users.id_info(uid) {
+    match shell.active_device().users.id_info(uid) {
         Some(info) => CommandOutput::ok(format!("{info}\n")),
         None => CommandOutput::error("id: cannot find user\n"),
     }
 }
 
 pub fn groups(shell: &mut Shell, args: &[String], _stdin: Option<&str>) -> CommandOutput {
+    let users = &shell.active_device().users;
     let uid = match args.first() {
-        Some(name) => match shell.users.user_by_name(name) {
+        Some(name) => match users.user_by_name(name) {
             Some(u) => u.uid,
             None => return CommandOutput::error(format!("groups: '{name}': no such user\n")),
         },
         None => shell.context.uid,
     };
-    match shell.users.groups_of(uid) {
+    match shell.active_device().users.groups_of(uid) {
         Some(gs) => {
             let names = gs.iter().map(|g| g.name.clone()).collect::<Vec<_>>().join(" ");
             CommandOutput::ok(format!("{names}\n"))

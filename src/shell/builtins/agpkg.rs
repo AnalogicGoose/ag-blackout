@@ -14,14 +14,21 @@ pub fn agpkg(shell: &mut Shell, args: &[String], _stdin: Option<&str>) -> Comman
             let Some(query) = rest.first() else {
                 return CommandOutput::error("agpkg search: missing query\n");
             };
-            let out = shell.packages.search(query).iter().map(|p| format!("{} - {}", p.name, p.description)).collect::<Vec<_>>().join("\n");
+            let out = shell
+                .active_device()
+                .packages
+                .search(query)
+                .iter()
+                .map(|p| format!("{} - {}", p.name, p.description))
+                .collect::<Vec<_>>()
+                .join("\n");
             CommandOutput::ok(if out.is_empty() { out } else { out + "\n" })
         }
         "info" => {
             let Some(name) = rest.first() else {
                 return CommandOutput::error("agpkg info: missing package name\n");
             };
-            match shell.packages.info(name) {
+            match shell.active_device().packages.info(name) {
                 Some(p) => CommandOutput::ok(format!(
                     "Package: {}\nVersion: {}\nDescription: {}\nDepends: {}\n",
                     p.name,
@@ -33,7 +40,7 @@ pub fn agpkg(shell: &mut Shell, args: &[String], _stdin: Option<&str>) -> Comman
             }
         }
         "list" => {
-            let mut installed = shell.packages.list_installed();
+            let mut installed = shell.active_device().packages.list_installed();
             installed.sort_by(|a, b| a.name.cmp(&b.name));
             let out = installed
                 .iter()
@@ -46,9 +53,10 @@ pub fn agpkg(shell: &mut Shell, args: &[String], _stdin: Option<&str>) -> Comman
             let Some(name) = rest.first() else {
                 return CommandOutput::error("agpkg install: missing package name\n");
             };
-            match shell.packages.install(is_root, name) {
+            let device = shell.active_device_mut();
+            match device.packages.install(is_root, name) {
                 Ok(installed) => {
-                    shell.logs.record("agpkg", format!("installed {} (uid {uid})", installed.join(", ")));
+                    device.logs.record("agpkg", format!("installed {} (uid {uid})", installed.join(", ")));
                     CommandOutput::ok(format!("Installing: {}\n", installed.join(", ")))
                 }
                 Err(e) => CommandOutput::error(format!("agpkg install: {e}\n")),
@@ -58,26 +66,30 @@ pub fn agpkg(shell: &mut Shell, args: &[String], _stdin: Option<&str>) -> Comman
             let Some(name) = rest.first() else {
                 return CommandOutput::error("agpkg remove: missing package name\n");
             };
-            match shell.packages.remove(is_root, name) {
+            let device = shell.active_device_mut();
+            match device.packages.remove(is_root, name) {
                 Ok(()) => {
-                    shell.logs.record("agpkg", format!("removed {name} (uid {uid})"));
+                    device.logs.record("agpkg", format!("removed {name} (uid {uid})"));
                     CommandOutput::empty_ok()
                 }
                 Err(e) => CommandOutput::error(format!("agpkg remove: {e}\n")),
             }
         }
-        "update" => match shell.packages.update(is_root) {
+        "update" => match shell.active_device_mut().packages.update(is_root) {
             Ok(()) => CommandOutput::ok("Reading package lists... Done\n"),
             Err(e) => CommandOutput::error(format!("agpkg update: {e}\n")),
         },
-        "upgrade" => match shell.packages.upgrade(is_root) {
-            Ok(upgraded) if upgraded.is_empty() => CommandOutput::ok("0 upgraded, 0 newly installed\n"),
-            Ok(upgraded) => {
-                shell.logs.record("agpkg", format!("upgraded {} (uid {uid})", upgraded.join(", ")));
-                CommandOutput::ok(format!("Upgraded: {}\n", upgraded.join(", ")))
+        "upgrade" => {
+            let device = shell.active_device_mut();
+            match device.packages.upgrade(is_root) {
+                Ok(upgraded) if upgraded.is_empty() => CommandOutput::ok("0 upgraded, 0 newly installed\n"),
+                Ok(upgraded) => {
+                    device.logs.record("agpkg", format!("upgraded {} (uid {uid})", upgraded.join(", ")));
+                    CommandOutput::ok(format!("Upgraded: {}\n", upgraded.join(", ")))
+                }
+                Err(e) => CommandOutput::error(format!("agpkg upgrade: {e}\n")),
             }
-            Err(e) => CommandOutput::error(format!("agpkg upgrade: {e}\n")),
-        },
+        }
         other => CommandOutput::error(format!("agpkg: unknown subcommand '{other}'\n")),
     }
 }

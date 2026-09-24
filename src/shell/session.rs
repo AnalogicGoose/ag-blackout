@@ -1,54 +1,95 @@
 use std::collections::HashMap;
 
-use crate::filesystem::{VirtualFS, VirtualPath};
-use crate::package::PackageManager;
-use crate::system::{ExecutionContext, LogBook, ProcessTable, ServiceRegistry, Sudoers, UserDatabase};
+use crate::career::{ContractBoard, Economy};
+use crate::filesystem::VirtualPath;
+use crate::system::ExecutionContext;
+use crate::world::{Device, Network};
 
 use super::builtins::{self, CommandFn};
 use super::output::{CommandOutput, LineResult};
 use super::parser::{self, RedirectKind, Redirection};
 
-/// A logged-in shell session: identity, the machine's filesystem, user
-/// database, process/service state and package manager, and the command
-/// table. `execute_line` is the one entry point — parse a raw line, run its
-/// pipeline, return what would be printed.
+/// A logged-in shell session. Owns the player's world (`Network`) and career
+/// state (`ContractBoard`, `Economy`) — those persist across `connect`/
+/// `disconnect` — plus which device the session is currently attached to and
+/// the identity it's authenticated as there. `execute_line` is the one entry
+/// point — parse a raw line, run its pipeline against whichever device is
+/// active, return what would be printed.
 pub struct Shell {
+    pub network: Network,
+    pub economy: Economy,
+    pub contracts: ContractBoard,
     pub context: ExecutionContext,
-    pub filesystem: VirtualFS,
-    pub users: UserDatabase,
-    pub sudoers: Sudoers,
-    pub processes: ProcessTable,
-    pub services: ServiceRegistry,
-    pub logs: LogBook,
-    pub packages: PackageManager,
+    local_hostname: String,
+    active_hostname: String,
+    local_context: ExecutionContext,
     builtins: HashMap<&'static str, CommandFn>,
 }
 
 impl Shell {
-    pub fn new(
-        filesystem: VirtualFS,
-        users: UserDatabase,
-        sudoers: Sudoers,
-        context: ExecutionContext,
-        processes: ProcessTable,
-        services: ServiceRegistry,
-        packages: PackageManager,
-    ) -> Self {
+    /// Boots a session logged into `initial_uid` on whichever device in
+    /// `network` is named `local_hostname` — that's "home," what `disconnect`
+    /// returns to.
+    pub fn new(network: Network, local_hostname: impl Into<String>, initial_uid: u32) -> Self {
+        let local_hostname = local_hostname.into();
+        let local_context = network
+            .get(&local_hostname)
+            .and_then(|device| device.users.execution_context_for(initial_uid))
+            .expect("local_hostname must be registered in network and initial_uid must exist on it");
         Shell {
-            context,
-            filesystem,
-            users,
-            sudoers,
-            processes,
-            services,
-            packages,
-            logs: LogBook::default(),
+            network,
+            economy: Economy::new(),
+            contracts: ContractBoard::new(),
+            context: local_context.clone(),
+            active_hostname: local_hostname.clone(),
+            local_hostname,
+            local_context,
             builtins: builtins::table(),
         }
     }
 
     pub fn has_builtin(&self, name: &str) -> bool {
         self.builtins.contains_key(name)
+    }
+
+    /// The device the session is currently attached to — local by default,
+    /// whatever `connect` last targeted otherwise.
+    pub fn active_device(&self) -> &Device {
+        self.network.get(&self.active_hostname).expect("active_hostname always names a registered device")
+    }
+
+    pub fn active_device_mut(&mut self) -> &mut Device {
+        self.network.get_mut(&self.active_hostname).expect("active_hostname always names a registered device")
+    }
+
+    pub fn is_connected_remotely(&self) -> bool {
+        self.active_hostname != self.local_hostname
+    }
+
+    pub fn active_hostname(&self) -> &str {
+        &self.active_hostname
+    }
+
+    /// `connect`'s actual logic, callable directly by the builtin. Looks the
+    /// host up on the network, authenticates against *its* user database,
+    /// and — on success — switches the session's active device and identity.
+    pub fn connect(&mut self, hostname: &str, username: &str, password: &str) -> Result<(), String> {
+        let device = self.network.get(hostname).ok_or_else(|| format!("{hostname}: no route to host"))?;
+        let uid = device.users.authenticate(username, password).ok_or_else(|| format!("{hostname}: authentication failed"))?;
+        let ctx = device.users.execution_context_for(uid).expect("authenticate just confirmed this uid exists");
+        self.active_hostname = hostname.to_string();
+        self.context = ctx;
+        Ok(())
+    }
+
+    /// `disconnect`'s actual logic. Returns to the local device/identity.
+    pub fn disconnect(&mut self) -> Result<(), String> {
+        if !self.is_connected_remotely() {
+            return Err("not connected to a remote host".to_string());
+        }
+        self.active_hostname = self.local_hostname.clone();
+        self.context = self.local_context.clone();
+        Ok(())
     }
 
     pub fn execute_line(&mut self, input: &str) -> LineResult {
@@ -68,7 +109,8 @@ impl Shell {
             let stage_stdin = match stage.redirections.iter().find(|r| r.kind == RedirectKind::In) {
                 Some(redir) => {
                     let path = self.resolve(&redir.target);
-                    match self.filesystem.read_file(&self.context.fs_access(), &path) {
+                    let access = self.context.fs_access();
+                    match self.active_device_mut().filesystem.read_file(&access, &path) {
                         Ok(bytes) => Some(String::from_utf8_lossy(&bytes).into_owned()),
                         Err(e) => {
                             stderr_acc.push_str(&format!("ag-shell: {}: {e}\n", redir.target));
@@ -104,13 +146,13 @@ impl Shell {
         let path = self.resolve(&redir.target);
         let access = self.context.fs_access();
         let bytes = if redir.kind == RedirectKind::Append {
-            let mut existing = self.filesystem.read_file(&access, &path).unwrap_or_default();
+            let mut existing = self.active_device_mut().filesystem.read_file(&access, &path).unwrap_or_default();
             existing.extend_from_slice(stdout.as_bytes());
             existing
         } else {
             stdout.as_bytes().to_vec()
         };
-        if let Err(e) = self.filesystem.write_file(&access, &path, &bytes) {
+        if let Err(e) = self.active_device_mut().filesystem.write_file(&access, &path, &bytes) {
             stderr_acc.push_str(&format!("ag-shell: {}: {e}\n", redir.target));
         }
     }
@@ -182,5 +224,39 @@ mod tests {
     fn blank_line_is_a_silent_no_op() {
         let result = guest_shell().execute_line("   ");
         assert_eq!(result, super::super::output::LineResult::default());
+    }
+
+    #[test]
+    fn connect_switches_active_device_and_identity() {
+        let mut shell = guest_shell();
+        shell.network.register(crate::world::Device::new("target01"));
+        shell.connect("target01", "guest", "guest").unwrap();
+        assert!(shell.is_connected_remotely());
+        assert_eq!(shell.execute_line("whoami").stdout, "guest\n");
+    }
+
+    #[test]
+    fn connect_with_wrong_password_fails() {
+        let mut shell = guest_shell();
+        shell.network.register(crate::world::Device::new("target01"));
+        assert!(shell.connect("target01", "guest", "wrong").is_err());
+        assert!(!shell.is_connected_remotely());
+    }
+
+    #[test]
+    fn disconnect_restores_local_identity_and_cwd() {
+        let mut shell = guest_shell();
+        shell.network.register(crate::world::Device::new("target01"));
+        shell.connect("target01", "guest", "guest").unwrap();
+        shell.execute_line("cd /tmp");
+        shell.disconnect().unwrap();
+        assert!(!shell.is_connected_remotely());
+        assert_eq!(shell.execute_line("pwd").stdout, "/home/guest\n");
+    }
+
+    #[test]
+    fn disconnect_without_a_connection_fails() {
+        let mut shell = guest_shell();
+        assert!(shell.disconnect().is_err());
     }
 }

@@ -16,7 +16,8 @@ pub fn cd(shell: &mut Shell, args: &[String], _stdin: Option<&str>) -> CommandOu
         Ok(p) => p,
         Err(e) => return CommandOutput::error(format!("cd: {target}: {e}\n")),
     };
-    match shell.filesystem.is_dir(&shell.context.fs_access(), &path) {
+    let access = shell.context.fs_access();
+    match shell.active_device_mut().filesystem.is_dir(&access, &path) {
         Ok(true) => {
             shell.context.cwd = path;
             CommandOutput::empty_ok()
@@ -46,7 +47,8 @@ pub fn ls(shell: &mut Shell, args: &[String], _stdin: Option<&str>) -> CommandOu
         Ok(p) => p,
         Err(e) => return CommandOutput::error(format!("ls: {e}\n")),
     };
-    let mut entries = match shell.filesystem.list_dir(&shell.context.fs_access(), &path) {
+    let access = shell.context.fs_access();
+    let mut entries = match shell.active_device_mut().filesystem.list_dir(&access, &path) {
         Ok(e) => e,
         Err(e) => {
             return CommandOutput::error(format!("ls: cannot access '{}': {e}\n", path_arg.unwrap_or(".")))
@@ -60,19 +62,13 @@ pub fn ls(shell: &mut Shell, args: &[String], _stdin: Option<&str>) -> CommandOu
     }
 
     let out = if long {
+        let users = &shell.active_device().users;
         entries
             .iter()
             .map(|e| {
-                let owner = shell
-                    .users
-                    .user_by_uid(e.owner_uid)
-                    .map(|u| u.username.clone())
-                    .unwrap_or_else(|| e.owner_uid.to_string());
-                let group = shell
-                    .users
-                    .group_by_gid(e.group_gid)
-                    .map(|g| g.name.clone())
-                    .unwrap_or_else(|| e.group_gid.to_string());
+                let owner = users.user_by_uid(e.owner_uid).map(|u| u.username.clone()).unwrap_or_else(|| e.owner_uid.to_string());
+                let group =
+                    users.group_by_gid(e.group_gid).map(|g| g.name.clone()).unwrap_or_else(|| e.group_gid.to_string());
                 format!("{} {owner:<8} {group:<8} {:>6} {}", e.permissions_string(), e.size, e.name)
             })
             .collect::<Vec<_>>()

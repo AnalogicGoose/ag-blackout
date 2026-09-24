@@ -1,6 +1,6 @@
 # AG Linux — System Architecture
 
-This document tracks the architecture of the AG Linux simulation that powers AG: Blackout, and the incremental development plan. It is a living document — update it as design decisions are made or revised.
+This document tracks the architecture of the AG Linux simulation that powers AG: Blackout, and the incremental development plan. It is a living document — update it as design decisions are made or revised. For the gameplay design behind Phase 7 (why the game plays this way, not just how the code is organized), see [`GAME_DESIGN.md`](./GAME_DESIGN.md).
 
 ## Core principle
 
@@ -43,29 +43,47 @@ src/
 │   ├── repository.rs         # Repository — the static embedded AGPKG catalog
 │   ├── installed.rs           # InstalledPackage, InstalledDatabase
 │   └── manager.rs               # PackageManager — install/remove/update/upgrade
+├── world/
+│   ├── mod.rs
+│   ├── device.rs             # Device — a machine: hostname + an AG Linux instance
+│   └── network.rs             # Network — OS-blind identity registry + reachability
+├── career/
+│   ├── mod.rs
+│   ├── economy.rs            # Economy — the player's balance
+│   ├── contract.rs            # Contract, ContractStatus — one hardcoded objective kind (Slice 1)
+│   └── board.rs                # ContractBoard — accept/record_read (resolution + payout)
 └── shell/
     ├── mod.rs
     ├── parser.rs            # tokenizer + pipeline/redirection parsing
     ├── output.rs             # CommandOutput, LineResult
-    ├── session.rs             # Shell — owns everything, execute_line() is the entry point
+    ├── session.rs             # Shell — session (network/economy/contracts/identity), execute_line()
     ├── test_support.rs         # #[cfg(test)] helpers (guest_shell(), root_shell(), ...)
     └── builtins/
         ├── mod.rs                # the command table (name -> fn)
         ├── navigation.rs          # pwd, cd, ls
-        ├── files.rs                # cat, touch, mkdir, rm, cp, mv
+        ├── files.rs                # cat (completes ObtainResource contracts on success), touch, mkdir, rm, cp, mv
         ├── identity.rs              # whoami, id, groups
         ├── env.rs                    # echo, env, export, which
         ├── process.rs                  # ps, kill, service, logs
-        └── agpkg.rs                      # agpkg search/install/remove/update/upgrade/list/info
+        ├── agpkg.rs                     # agpkg search/install/remove/update/upgrade/list/info
+        └── network.rs                    # connect, disconnect
 ```
 
-`network/` and `ui/` don't exist yet — they land in later phases (see below).
+`ui/` doesn't exist yet — that's the Ratatui/Godot client layer, still ahead.
 
 ## ExecutionContext
 
 Every command runs against an `ExecutionContext` (uid, gids, cwd, environment). `system::registry::UserDatabase::execution_context_for(uid)` builds one from a seeded account. `ExecutionContext::fs_access()` converts it into a `filesystem::FsAccess`, which is all `VirtualFS` needs to evaluate a permission check.
 
 This is a deliberate one-way dependency: **`system` depends on `filesystem`, never the other way around.** `VirtualFS` only ever sees a `FsAccess` (uid + gids + is_superuser) — it has no idea what a `User` or a password is. That's what let Phase 1 (filesystem) be built and fully tested before `system` (users) existed at all, and it's what keeps `sudo`/`su`/`chmod`/`chown` out of the filesystem layer entirely: they're system/shell-layer concerns that produce or consume an `ExecutionContext`/`FsAccess`, never special-cased inside `VirtualFS`.
+
+## Device, Network, and the session split
+
+`world::Device` bundles everything a machine needs — `VirtualFS`, `UserDatabase`, `Sudoers`, `ProcessTable`, `ServiceRegistry`, `PackageManager`, `LogBook` — directly, since AG Linux is currently the only OS. That's a deliberate simplification, not an oversight: introducing an OS trait/enum for exactly one implementor would be premature. When a second OS family becomes real, these fields are what gets pulled out behind that seam; nothing above `Device` needs to change to make that possible, because gameplay code never reaches into a device's internals directly (see docs/GAME_DESIGN.md).
+
+`world::Network` is a plain identity registry (`hostname -> Device`) plus a reachability check — intentionally not modeling routing, segments, or ports yet.
+
+`shell::Shell` is a *session*, not a machine: it owns the player's `Network`, `career::Economy`, `career::ContractBoard`, and the current `ExecutionContext` — plus which device that context is currently authenticated against (`active_hostname`, private; `active_device()`/`active_device_mut()` are the accessors every builtin uses instead of touching filesystem/users/etc. directly). `connect`/`disconnect` swap `active_hostname` and `context` between the session's home device and a remote one, restoring the stashed local identity on disconnect. This is what makes `whoami`/`cat`/`ps`/etc. transparently operate against whichever machine the player is currently on.
 
 ## AG Linux identity
 
@@ -106,6 +124,6 @@ Seeded by `UserDatabase::new()`:
 4. **Shell** — ✅ done. Parser (quoting, `$VAR` expansion, pipes, `>`/`>>`/`<`), `Shell::execute_line`, builtins for navigation/files/identity/env.
 5. **System** — ✅ done. `ProcessTable` (pid 1 = unkillable `ag-init`, owner-or-root `kill`), `ServiceRegistry` (sshd/cron/nginx, root-gated start/stop tied to a backing process), `ps`/`kill`/`service`/`logs` builtins, in-memory `LogBook`.
 6. **AGPKG** — ✅ done. Static embedded `Repository` (8 packages, dependency chains), `InstalledDatabase`, `PackageManager` (dependency-resolving install, dependent-blocked remove, root-gated everything), one `agpkg` builtin with 7 subcommands.
-7. **Gameplay systems** (later) — vulnerabilities, exploits, privilege escalation mechanics, persistence, objectives, missions, narrative.
+7. **Gameplay systems** — *(Slice 1 engine groundwork done; no actual contract content yet)*. `world` (`Device`, `Network`) and `career` (`Contract`, `ContractBoard`, `Economy`) exist; `Shell` is now a session that swaps devices via `connect`/`disconnect`; `cat` completes any `ObtainResource` contract targeting the file it just read and pays out through `Economy`. The full loop (accept a contract, connect with handed-over credentials, read the resource, get paid) is proven end-to-end by a test in `shell::builtins::files`, not by an actual seeded contract anywhere the game boots — wiring up a real first contract (content, not engine) is the next step. Full vision and rationale in [`GAME_DESIGN.md`](./GAME_DESIGN.md).
 
-We are currently starting Phase 7.
+We are inside Phase 7 — the Slice 1 engine seam is built and tested; the next step is content (an actual bootstrapped contract/target) and then a UI loop to play it interactively.

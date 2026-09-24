@@ -10,6 +10,7 @@ pub fn cat(shell: &mut Shell, args: &[String], stdin: Option<&str>) -> CommandOu
     }
     let mut out = String::new();
     let mut err = String::new();
+    let mut read_paths = Vec::new();
     for arg in args {
         let path = match VirtualPath::resolve(&shell.context.cwd, arg) {
             Ok(p) => p,
@@ -18,11 +19,25 @@ pub fn cat(shell: &mut Shell, args: &[String], stdin: Option<&str>) -> CommandOu
                 continue;
             }
         };
-        match shell.filesystem.read_file(&shell.context.fs_access(), &path) {
-            Ok(bytes) => out.push_str(&String::from_utf8_lossy(&bytes)),
+        let access = shell.context.fs_access();
+        match shell.active_device_mut().filesystem.read_file(&access, &path) {
+            Ok(bytes) => {
+                out.push_str(&String::from_utf8_lossy(&bytes));
+                read_paths.push(path);
+            }
             Err(e) => err.push_str(&format!("cat: {arg}: {e}\n")),
         }
     }
+
+    // A successful read is what "obtaining a resource" means for Slice 1's
+    // proof-of-access model — see docs/GAME_DESIGN.md.
+    let host = shell.active_hostname().to_string();
+    for path in &read_paths {
+        for contract in shell.contracts.record_read(&host, path) {
+            shell.economy.deposit(contract.reward);
+        }
+    }
+
     CommandOutput { stdout: out, stderr: err.clone(), exit_code: if err.is_empty() { 0 } else { 1 } }
 }
 
@@ -46,8 +61,11 @@ pub fn mkdir(shell: &mut Shell, args: &[String], _stdin: Option<&str>) -> Comman
             }
         };
         let access = shell.context.fs_access();
-        let result =
-            if parents { mkdir_all(&mut shell.filesystem, &access, &path) } else { shell.filesystem.mkdir(&access, &path) };
+        let result = if parents {
+            mkdir_all(&mut shell.active_device_mut().filesystem, &access, &path)
+        } else {
+            shell.active_device_mut().filesystem.mkdir(&access, &path)
+        };
         if let Err(e) = result {
             err.push_str(&format!("mkdir: cannot create directory '{raw}': {e}\n"));
         }
@@ -94,8 +112,8 @@ pub fn rm(shell: &mut Shell, args: &[String], _stdin: Option<&str>) -> CommandOu
             }
         };
         let access = shell.context.fs_access();
-        let result = match shell.filesystem.remove_file(&access, &path) {
-            Err(FsError::IsADirectory(_)) if recursive => shell.filesystem.remove_dir(&access, &path, true),
+        let result = match shell.active_device_mut().filesystem.remove_file(&access, &path) {
+            Err(FsError::IsADirectory(_)) if recursive => shell.active_device_mut().filesystem.remove_dir(&access, &path, true),
             other => other,
         };
         if let Err(e) = result {
@@ -136,7 +154,7 @@ fn run_for_each_path(
             }
         };
         let access = shell.context.fs_access();
-        if let Err(e) = op(&mut shell.filesystem, &access, &path) {
+        if let Err(e) = op(&mut shell.active_device_mut().filesystem, &access, &path) {
             err.push_str(&format!("{cmd_name}: {raw}: {e}\n"));
         }
     }
@@ -165,7 +183,7 @@ fn two_path_op(
         Err(e) => return CommandOutput::error(format!("{cmd_name}: {e}\n")),
     };
     let access = shell.context.fs_access();
-    match op(&mut shell.filesystem, &access, &from, &to) {
+    match op(&mut shell.active_device_mut().filesystem, &access, &from, &to) {
         Ok(()) => CommandOutput::empty_ok(),
         Err(e) => CommandOutput::error(format!("{cmd_name}: {e}\n")),
     }
@@ -174,6 +192,9 @@ fn two_path_op(
 #[cfg(test)]
 mod tests {
     use super::super::super::test_support::guest_shell;
+    use crate::career::Contract;
+    use crate::filesystem::VirtualPath;
+    use crate::world::Device;
 
     #[test]
     fn cat_reads_file_content() {
@@ -232,5 +253,26 @@ mod tests {
         shell.execute_line("mv /home/guest/old.txt /home/guest/new.txt");
         assert_eq!(shell.execute_line("cat /home/guest/old.txt").exit_code, 1);
         assert_eq!(shell.execute_line("cat /home/guest/new.txt").exit_code, 0);
+    }
+
+    /// The full Slice 1 loop: accept a contract, connect to the target with
+    /// the credentials it hands over, read the resource, verify it resolved
+    /// and paid out.
+    #[test]
+    fn reading_the_contracted_resource_on_the_target_resolves_it_and_pays_out() {
+        let mut shell = guest_shell();
+        let mut target = Device::new("target01");
+        let access = crate::filesystem::FsAccess::root();
+        let path = VirtualPath::resolve(&VirtualPath::root(), "/home/guest/report.pdf").unwrap();
+        target.filesystem.write_file(&access, &path, b"confidential").unwrap();
+        shell.network.register(target);
+
+        shell.contracts.accept(Contract::new("Get the report", "target01", path.clone(), 3000));
+
+        shell.execute_line("connect target01 guest guest");
+        let result = shell.execute_line("cat /home/guest/report.pdf");
+        assert_eq!(result.stdout, "confidential");
+        assert_eq!(shell.economy.balance(), 3000);
+        assert_eq!(shell.contracts.active().count(), 0);
     }
 }

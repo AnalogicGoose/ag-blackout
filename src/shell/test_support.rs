@@ -1,15 +1,11 @@
-use crate::filesystem::VirtualFS;
-use crate::package::PackageManager;
-use crate::system::{ProcessTable, ServiceRegistry, Sudoers, UserDatabase};
+use crate::world::{Device, Network};
 
 use super::session::Shell;
 
 pub fn shell_for(uid: u32) -> Shell {
-    let users = UserDatabase::new();
-    let context = users.execution_context_for(uid).unwrap();
-    let mut processes = ProcessTable::new();
-    let services = ServiceRegistry::new(&mut processes);
-    Shell::new(VirtualFS::new(), users, Sudoers::new(), context, processes, services, PackageManager::new())
+    let mut network = Network::new();
+    network.register(Device::new("localhost"));
+    Shell::new(network, "localhost", uid)
 }
 
 pub fn guest_shell() -> Shell {
