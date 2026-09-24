@@ -2,6 +2,7 @@ mod env;
 mod files;
 mod identity;
 mod navigation;
+mod process;
 
 use std::collections::HashMap;
 
@@ -41,5 +42,9 @@ pub fn table() -> HashMap<&'static str, CommandFn> {
     m.insert("env", env::env);
     m.insert("export", env::export);
     m.insert("which", env::which);
+    m.insert("ps", process::ps);
+    m.insert("kill", process::kill);
+    m.insert("service", process::service);
+    m.insert("logs", process::logs);
     m
 }

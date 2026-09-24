@@ -26,17 +26,29 @@ src/
 │   ├── permissions.rs      # Mode (rwx bits), FsAccess, AccessClass/AccessMode
 │   ├── path.rs              # VirtualPath — absolute, normalized paths
 │   └── error.rs              # FsError
-└── system/
+├── system/
+│   ├── mod.rs
+│   ├── user.rs              # User, PasswordState (+ FNV-1a hashing)
+│   ├── group.rs              # Group
+│   ├── registry.rs            # UserDatabase — seeded accounts, lookups, id/whoami
+│   ├── context.rs              # ExecutionContext — identity + cwd + env, bridges to FsAccess
+│   ├── sudoers.rs               # Sudoers — who may sudo
+│   └── privilege.rs              # su() / sudo() / PrivilegeError
+└── shell/
     ├── mod.rs
-    ├── user.rs              # User, PasswordState (+ FNV-1a hashing)
-    ├── group.rs              # Group
-    ├── registry.rs            # UserDatabase — seeded accounts, lookups, id/whoami
-    ├── context.rs              # ExecutionContext — identity + cwd + env, bridges to FsAccess
-    ├── sudoers.rs               # Sudoers — who may sudo
-    └── privilege.rs              # su() / sudo() / PrivilegeError
+    ├── parser.rs            # tokenizer + pipeline/redirection parsing
+    ├── output.rs             # CommandOutput, LineResult
+    ├── session.rs             # Shell — owns everything, execute_line() is the entry point
+    ├── test_support.rs         # #[cfg(test)] helpers (guest_shell(), root_shell(), ...)
+    └── builtins/
+        ├── mod.rs                # the command table (name -> fn)
+        ├── navigation.rs          # pwd, cd, ls
+        ├── files.rs                # cat, touch, mkdir, rm, cp, mv
+        ├── identity.rs              # whoami, id, groups
+        └── env.rs                    # echo, env, export, which
 ```
 
-`shell/`, `network/`, `package/` and `ui/` don't exist yet — they land in later phases (see below).
+`network/`, `package/` and `ui/` don't exist yet — they land in later phases (see below).
 
 ## ExecutionContext
 
@@ -67,16 +79,19 @@ Seeded by `UserDatabase::new()`:
 - **`/etc/passwd`, `/etc/shadow`, `/etc/sudoers` are static flavor text**, written once by `VirtualFS::build_default_tree()` (Phase 1). They are *not* generated from, or read back into, `UserDatabase`/`Sudoers` (Phase 2/3). The two are independent right now. This matters for a hacking sim specifically: classic privilege-escalation techniques like "edit `/etc/sudoers` to grant yourself access" or "find a misconfigured `NOPASSWD` line" would require actually parsing those files into the real policy structs instead of hardcoding it in `Sudoers`. Worth revisiting once there's a concrete gameplay reason to.
 - **`sudo`/`su` are simplified vs. real Linux:** no password caching (real `sudo` remembers ~15 min per session), no `NOPASSWD` sudoers entries, no per-command or per-target-user restriction (ours is all-or-nothing once permitted), no logging of denied attempts. All reasonable Phase 7 (gameplay) or later hooks.
 - **Hard links (`ln` without `-s`) are not implemented.** `VirtualFS` owns nodes directly in a tree (`BTreeMap<String, Node>` per directory) with no inode-indirection layer, so a hard link (two directory entries sharing one node) isn't representable yet. Symlinks work today because they're just a node holding a target string. Adding hard links means introducing an inode table — postponed until something actually needs it.
-- **`su`'s `login` flag is a plain `bool`**, not real `-`/`--login` flag parsing, since there's no shell yet to parse flags. Phase 4 just passes the bool through.
+- **`su`'s `login` flag is a plain `bool`**, not real `-`/`--login` flag parsing.
+- **`su`/`sudo` are still not shell builtins.** They need an interactive password prompt (hidden input, multi-turn), which has nowhere to live without a UI loop — Ratatui/Crossterm are still completely unused; `main.rs` only prints the boot banner. Revisit once there's an actual terminal loop.
+- **No command chaining (`;`, `&&`, `||`), no globbing, no backslash escaping** in the shell parser — not needed yet, easy to add later without restructuring.
+- **`PATH`/`which` are mostly flavor.** There's no AGPKG yet (Phase 6), so there are no real installed binaries to search for — `which` just reports a synthetic `/bin/<name>` for known builtins.
 
 ## Development phases
 
 1. **Filesystem foundation** — ✅ done. Modular `VirtualFS`, rwx permissions, ownership, hidden files (dot-prefix), symlinks (with loop detection), `touch`/`write_file`/`rm`/`cp`/`mv`, `mkdir`/`remove_dir` (recursive or not), path normalization (`.`/`..`/absolute/relative), the initial AG Linux directory tree, `FsError`, unit tests.
 2. **Users** — ✅ done. `User`/`Group`/`UserDatabase` with the four seeded accounts above, `whoami`/`id`/`groups` query logic (`IdInfo` + `Display`), password hashing (FNV-1a, not real crypto — this is a simulation), `ExecutionContext`.
 3. **Privileges** — ✅ done. `Sudoers` policy (root + `%sudo` group), `su` (verifies target's password, root bypasses), `sudo` (verifies caller's own password after a sudoers check, keeps caller's cwd). `chmod`/`chown` needed no new work — already correct in `VirtualFS` since Phase 1.
-4. **Shell** — *(next)* environment, `PATH`, command lookup, pipes, redirection, parser.
-5. **System** — processes, services, `/proc`, `ps`, `kill`, logs.
+4. **Shell** — ✅ done. Parser (quoting, `$VAR` expansion, pipes, `>`/`>>`/`<`), `Shell::execute_line`, builtins for navigation/files/identity/env.
+5. **System** — *(next)* processes, services, `/proc`, `ps`, `kill`, logs.
 6. **AGPKG** — package database, repositories, dependencies, package commands.
 7. **Gameplay systems** (later) — vulnerabilities, exploits, privilege escalation mechanics, persistence, objectives, missions, narrative.
 
-We are currently starting Phase 4.
+We are currently starting Phase 5.
