@@ -22,10 +22,17 @@ pub fn draw(frame: &mut Frame, app: &App) {
     };
 
     let prompt = app.prompt_string();
-    let input_line = Line::from(vec![
+    let mut input_spans = vec![
         Span::styled(prompt.clone(), Style::default().fg(Color::Green)),
-        Span::raw(app.input.as_str()),
-    ]);
+        Span::raw(app.input.clone()),
+    ];
+    if let Some(suggestion) = app.suggestion() {
+        // Fish-style: the remainder of a matching history entry, dimmed,
+        // shown right after the cursor. Never part of the real input until
+        // accepted (Right arrow at end of line — see App::accept_suggestion).
+        input_spans.push(Span::styled(suggestion, Style::default().fg(Color::DarkGray)));
+    }
+    let input_line = Line::from(input_spans);
 
     let mut lines = app.lines.clone();
     lines.push(input_line);

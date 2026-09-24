@@ -266,6 +266,9 @@ impl Shell {
         let Some(f) = self.builtins.get(name.as_str()).copied() else {
             return CommandOutput::error(format!("ag-shell: {name}: command not found\n"));
         };
+        if argv[1..].iter().any(|a| a == "-h" || a == "--help") {
+            return CommandOutput::ok(builtins::help_text(name));
+        }
         f(self, &argv[1..], stdin)
     }
 }
@@ -279,6 +282,31 @@ mod tests {
         let result = guest_shell().execute_line("frobnicate");
         assert_eq!(result.exit_code, 1);
         assert!(result.stderr.contains("command not found"));
+    }
+
+    #[test]
+    fn dash_h_and_dash_dash_help_print_usage_instead_of_running_the_command() {
+        let mut shell = guest_shell();
+        for flag in ["-h", "--help"] {
+            let result = shell.execute_line(&format!("ls {flag}"));
+            assert_eq!(result.exit_code, 0);
+            assert!(result.stdout.contains("Usage: ls"));
+        }
+    }
+
+    #[test]
+    fn help_flag_on_an_unknown_command_still_reports_not_found() {
+        let result = guest_shell().execute_line("frobnicate --help");
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("command not found"));
+    }
+
+    #[test]
+    fn help_flag_does_not_run_the_command_it_shortcuts() {
+        let mut shell = guest_shell();
+        // mkdir --help must not actually create anything.
+        shell.execute_line("mkdir --help /home/guest/should-not-exist");
+        assert_eq!(shell.execute_line("cd /home/guest/should-not-exist").exit_code, 1);
     }
 
     #[test]
