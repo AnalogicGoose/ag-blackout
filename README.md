@@ -6,7 +6,7 @@ The game simulates **AG Linux**, a fictional Unix-like operating system develope
 
 ## Status
 
-Early development. The project currently ships a minimal stub; the OS simulation (filesystem, shell, users/permissions, processes, services, networking, AGPKG) is being built incrementally. See [`ARCHITECTURE.md`](./ARCHITECTURE.md) for the target module layout and development phases. No story, missions or narrative content yet — this stage is exclusively the technical sandbox.
+Early development, built incrementally phase by phase. Done so far: the filesystem foundation (`VirtualFS`, permissions, symlinks, the AG Linux directory tree), users and groups (`UserDatabase`, seeded accounts), and privilege escalation (`sudo`/`su`/sudoers). Next up: the shell. See [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) for the module layout, design decisions and full phase breakdown. No story, missions or narrative content yet — this stage is exclusively the technical sandbox.
 
 ## Building
 
