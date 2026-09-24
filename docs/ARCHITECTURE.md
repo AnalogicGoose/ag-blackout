@@ -52,24 +52,30 @@ src/
 │   ├── economy.rs            # Economy — the player's balance
 │   ├── contract.rs            # Contract, ContractStatus — one hardcoded objective kind (Slice 1)
 │   └── board.rs                # ContractBoard — accept/record_read (resolution + payout)
-└── shell/
+├── shell/
+│   ├── mod.rs
+│   ├── parser.rs            # tokenizer + pipeline/redirection parsing
+│   ├── output.rs             # CommandOutput, LineResult
+│   ├── session.rs             # Shell — session (network/economy/contracts/identity), execute_line()
+│   ├── scenario.rs             # tutorial() — the one hardcoded Slice 1 scenario (content, not engine)
+│   ├── test_support.rs          # #[cfg(test)] helpers (guest_shell(), root_shell(), ...)
+│   └── builtins/
+│       ├── mod.rs                 # the command table (name -> fn)
+│       ├── navigation.rs           # pwd, cd, ls
+│       ├── files.rs                 # cat (completes ObtainResource contracts on success), touch, mkdir, rm, cp, mv
+│       ├── identity.rs               # whoami, id, groups
+│       ├── env.rs                     # echo, env, export, which
+│       ├── process.rs                  # ps, kill, service, logs
+│       ├── agpkg.rs                     # agpkg search/install/remove/update/upgrade/list/info
+│       └── network.rs                    # connect, disconnect
+└── ui/
     ├── mod.rs
-    ├── parser.rs            # tokenizer + pipeline/redirection parsing
-    ├── output.rs             # CommandOutput, LineResult
-    ├── session.rs             # Shell — session (network/economy/contracts/identity), execute_line()
-    ├── test_support.rs         # #[cfg(test)] helpers (guest_shell(), root_shell(), ...)
-    └── builtins/
-        ├── mod.rs                # the command table (name -> fn)
-        ├── navigation.rs          # pwd, cd, ls
-        ├── files.rs                # cat (completes ObtainResource contracts on success), touch, mkdir, rm, cp, mv
-        ├── identity.rs              # whoami, id, groups
-        ├── env.rs                    # echo, env, export, which
-        ├── process.rs                  # ps, kill, service, logs
-        ├── agpkg.rs                     # agpkg search/install/remove/update/upgrade/list/info
-        └── network.rs                    # connect, disconnect
+    ├── terminal.rs          # TerminalGuard (raw mode + alternate screen, restores on drop/panic)
+    ├── app.rs                 # App — scrollback/input/cursor/history state, handle_key(), run() event loop
+    └── render.rs                # one borderless scrollback pane — reads as a real terminal, not a TUI-with-a-terminal-widget
 ```
 
-`ui/` doesn't exist yet — that's the Ratatui/Godot client layer, still ahead.
+`ui/` is the Ratatui terminal client — Godot will be a separate, unrelated client added much later, not part of this module tree.
 
 ## ExecutionContext
 
@@ -109,12 +115,14 @@ Seeded by `UserDatabase::new()`:
 - **`sudo`/`su` are simplified vs. real Linux:** no password caching (real `sudo` remembers ~15 min per session), no `NOPASSWD` sudoers entries, no per-command or per-target-user restriction (ours is all-or-nothing once permitted), no logging of denied attempts. All reasonable Phase 7 (gameplay) or later hooks.
 - **Hard links (`ln` without `-s`) are not implemented.** `VirtualFS` owns nodes directly in a tree (`BTreeMap<String, Node>` per directory) with no inode-indirection layer, so a hard link (two directory entries sharing one node) isn't representable yet. Symlinks work today because they're just a node holding a target string. Adding hard links means introducing an inode table — postponed until something actually needs it.
 - **`su`'s `login` flag is a plain `bool`**, not real `-`/`--login` flag parsing.
-- **`su`/`sudo` are still not shell builtins.** They need an interactive password prompt (hidden input, multi-turn), which has nowhere to live without a UI loop — Ratatui/Crossterm are still completely unused; `main.rs` only prints the boot banner. Revisit once there's an actual terminal loop.
+- **`su`/`sudo` are still not shell builtins.** The original blocker (no UI loop for a hidden-input password prompt) is gone now that `ui::App` has a real key event loop — a multi-turn "prompt, mask input, resume" state would fit naturally. Just not built yet.
 - **No command chaining (`;`, `&&`, `||`), no globbing, no backslash escaping** in the shell parser — not needed yet, easy to add later without restructuring.
 - **`PATH`/`which` are mostly flavor.** `which` only knows about shell builtins, not AGPKG-installed packages — AGPKG doesn't write anything into `VirtualFS` (no real binary files show up under `/usr/bin`), it's purely an in-memory `InstalledDatabase`. Same reasoning as `/proc`/logs below: no read-back path exists yet to make that worthwhile.
 - **`/proc` is not synthesized.** Real dynamic procfs content needs a `Node` variant that generates content on read; `NodeKind` only holds static bytes. `ps` covers the actual ask (Phase 5); revisit if something needs `cat /proc/<pid>/...` specifically.
 - **System logs (`kill`, `service`, `agpkg`) live in an in-memory `LogBook`, not `/var/log`.** No simulated clock exists to timestamp them meaningfully in-world, and nothing reads log files back off disk yet either.
 - **AGPKG's catalog and `/etc/agpkg/repos.conf` are unrelated**, same pattern as `/etc/sudoers`: the repo file written by Phase 1 is flavor text, `package::Repository` is a separate static embedded catalog. No real network fetches (Section 16 says not to implement those anyway).
+- **`ui` has its own known gaps:** scroll math treats each logical output line as exactly one terminal row, so a line that word-wraps across multiple rows throws off scroll precision slightly (acceptable for typical short command output, not exact). The live cursor's row position assumes the input line itself doesn't wrap — a very long typed command will visually mis-place the cursor. Both are cosmetic, not correctness bugs in the underlying `Shell`/`App` state.
+- **The Scroll Mode toggle fires on `Ctrl+Space`, not strictly `Ctrl+Shift+Space`.** Most terminals — including several IDE-embedded ones — send the same byte for both, so requiring the `SHIFT` modifier made the toggle unreachable there even though it's labeled "Ctrl+Shift+Space" in the status line. `Esc` always exits Scroll Mode too, as a protocol-independent fallback.
 
 ## Development phases
 
@@ -124,6 +132,6 @@ Seeded by `UserDatabase::new()`:
 4. **Shell** — ✅ done. Parser (quoting, `$VAR` expansion, pipes, `>`/`>>`/`<`), `Shell::execute_line`, builtins for navigation/files/identity/env.
 5. **System** — ✅ done. `ProcessTable` (pid 1 = unkillable `ag-init`, owner-or-root `kill`), `ServiceRegistry` (sshd/cron/nginx, root-gated start/stop tied to a backing process), `ps`/`kill`/`service`/`logs` builtins, in-memory `LogBook`.
 6. **AGPKG** — ✅ done. Static embedded `Repository` (8 packages, dependency chains), `InstalledDatabase`, `PackageManager` (dependency-resolving install, dependent-blocked remove, root-gated everything), one `agpkg` builtin with 7 subcommands.
-7. **Gameplay systems** — *(Slice 1 engine groundwork done; no actual contract content yet)*. `world` (`Device`, `Network`) and `career` (`Contract`, `ContractBoard`, `Economy`) exist; `Shell` is now a session that swaps devices via `connect`/`disconnect`; `cat` completes any `ObtainResource` contract targeting the file it just read and pays out through `Economy`. The full loop (accept a contract, connect with handed-over credentials, read the resource, get paid) is proven end-to-end by a test in `shell::builtins::files`, not by an actual seeded contract anywhere the game boots — wiring up a real first contract (content, not engine) is the next step. Full vision and rationale in [`GAME_DESIGN.md`](./GAME_DESIGN.md).
+7. **Gameplay systems** — *(Slice 1 playable via `cargo run`, in a real terminal UI)*. `world` (`Device`, `Network`) and `career` (`Contract`, `ContractBoard`, `Economy`) exist; `Shell` is a session that swaps devices via `connect`/`disconnect`; `cat` completes any `ObtainResource` contract targeting the file it just read and pays out through `Economy`. `shell::scenario::tutorial()` boots the one hardcoded scenario (player's machine + `corp-fs01` holding the contracted resource, one contract pre-accepted). `ui::App` renders it as one continuous scrollback pane (no borders/widgets — reads as an actual terminal), with line editing, command history (up/down), mouse-wheel scrolling, and a dedicated Scroll Mode (`Ctrl+Shift+Space` to toggle, `Esc` to always exit — status line shown while active) for keyboard-driven scrollback navigation without touching the input line; `main.rs` just wires `TerminalGuard` + `Terminal` + `App::run`. Full vision and rationale in [`GAME_DESIGN.md`](./GAME_DESIGN.md).
 
-We are inside Phase 7 — the Slice 1 engine seam is built and tested; the next step is content (an actual bootstrapped contract/target) and then a UI loop to play it interactively.
+We are inside Phase 7 — Slice 1 works end to end via `cargo run` in a real terminal UI. Next: a real contract board (more than one hardcoded scenario).

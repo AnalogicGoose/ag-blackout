@@ -1,6 +1,7 @@
 pub mod builtins;
 pub mod output;
 pub mod parser;
+pub mod scenario;
 pub mod session;
 
 #[cfg(test)]
