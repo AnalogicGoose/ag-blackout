@@ -55,8 +55,8 @@ impl App {
             should_quit: false,
         };
         app.push_plain("AG Linux 1.0.0 (Blackbird) — AnalogicGoose");
-        app.push_plain("1 contract available: \"Retrieve the Q3 report\" — corp-fs01 — $3000");
-        app.push_plain("Credentials: connect corp-fs01 guest guest");
+        app.push_plain("Type 'contracts' to see available jobs, 'contracts accept <id>' to take one.");
+        app.push_plain("Every target in this scenario uses the guest/guest account for now.");
         app.push_plain("");
         app
     }
@@ -437,6 +437,12 @@ mod tests {
     #[test]
     fn completing_the_tutorial_contract_through_key_events() {
         let mut app = App::new();
+
+        for c in "contracts accept 1".chars() {
+            app.handle_key(key(KeyCode::Char(c)));
+        }
+        app.handle_key(key(KeyCode::Enter));
+
         for c in "connect corp-fs01 guest guest".chars() {
             app.handle_key(key(KeyCode::Char(c)));
         }

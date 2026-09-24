@@ -1,7 +1,9 @@
 use crate::filesystem::VirtualPath;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ContractStatus {
+    /// Posted to the board, not yet taken.
+    Available,
     Active,
     Completed,
 }
@@ -13,6 +15,8 @@ pub enum ContractStatus {
 /// other fields or how contracts are stored/resolved. See docs/GAME_DESIGN.md.
 #[derive(Clone, Debug)]
 pub struct Contract {
+    /// Assigned by `ContractBoard::post`; `0` until then.
+    pub id: u32,
     pub title: String,
     pub target_hostname: String,
     pub resource_path: VirtualPath,
@@ -23,11 +27,12 @@ pub struct Contract {
 impl Contract {
     pub fn new(title: impl Into<String>, target_hostname: impl Into<String>, resource_path: VirtualPath, reward: i64) -> Self {
         Contract {
+            id: 0,
             title: title.into(),
             target_hostname: target_hostname.into(),
             resource_path,
             reward,
-            status: ContractStatus::Active,
+            status: ContractStatus::Available,
         }
     }
 }

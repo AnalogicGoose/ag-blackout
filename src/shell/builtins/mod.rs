@@ -5,6 +5,7 @@ mod identity;
 mod navigation;
 mod network;
 mod process;
+mod contracts;
 
 use std::collections::HashMap;
 
@@ -51,5 +52,6 @@ pub fn table() -> HashMap<&'static str, CommandFn> {
     m.insert("agpkg", agpkg::agpkg);
     m.insert("connect", network::connect);
     m.insert("disconnect", network::disconnect);
+    m.insert("contracts", contracts::contracts);
     m
 }

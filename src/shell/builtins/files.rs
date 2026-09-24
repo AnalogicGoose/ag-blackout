@@ -267,7 +267,8 @@ mod tests {
         target.filesystem.write_file(&access, &path, b"confidential").unwrap();
         shell.network.register(target);
 
-        shell.contracts.accept(Contract::new("Get the report", "target01", path.clone(), 3000));
+        let id = shell.contracts.post(Contract::new("Get the report", "target01", path.clone(), 3000));
+        shell.execute_line(&format!("contracts accept {id}"));
 
         shell.execute_line("connect target01 guest guest");
         let result = shell.execute_line("cat /home/guest/report.pdf");
