@@ -3,6 +3,7 @@ use std::fmt;
 
 use crate::filesystem::VirtualPath;
 
+use super::context::ExecutionContext;
 use super::group::Group;
 use super::user::{PasswordState, User};
 
@@ -148,6 +149,20 @@ impl UserDatabase {
         Some(groups)
     }
 
+    /// Just the supplementary groups (no primary) — what `ExecutionContext::for_user`
+    /// expects as its `groups` argument, since it adds the primary group itself.
+    pub fn supplementary_groups_of(&self, uid: u32) -> Option<Vec<&Group>> {
+        let user = self.user_by_uid(uid)?;
+        Some(user.supplementary_gids.iter().filter_map(|gid| self.group_by_gid(*gid)).collect())
+    }
+
+    /// Builds the `ExecutionContext` a fresh login/`su`/`sudo` would start with.
+    pub fn execution_context_for(&self, uid: u32) -> Option<ExecutionContext> {
+        let user = self.user_by_uid(uid)?;
+        let groups = self.supplementary_groups_of(uid)?;
+        Some(ExecutionContext::for_user(user, &groups))
+    }
+
     pub fn id_info(&self, uid: u32) -> Option<IdInfo> {
         let user = self.user_by_uid(uid)?;
         let group_name = self
@@ -254,5 +269,23 @@ mod tests {
         assert!(!db.verify_password(1001, "guest"));
         assert!(db.verify_password(1001, "newpass"));
         assert!(!db.set_password(9999, "x"));
+    }
+
+    #[test]
+    fn supplementary_groups_of_excludes_primary() {
+        let db = UserDatabase::new();
+        let groups = db.supplementary_groups_of(1000).unwrap();
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].name, "sudo");
+        assert!(db.supplementary_groups_of(1001).unwrap().is_empty());
+    }
+
+    #[test]
+    fn execution_context_for_admin_includes_sudo_gid() {
+        let db = UserDatabase::new();
+        let ctx = db.execution_context_for(1000).unwrap();
+        assert_eq!(ctx.uid, 1000);
+        assert_eq!(ctx.gids, vec![1000, 27]);
+        assert_eq!(ctx.cwd.to_string(), "/home/admin");
     }
 }
