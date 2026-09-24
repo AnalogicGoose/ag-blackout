@@ -50,7 +50,7 @@ Contract
 
 `target` is optional because not every contract is device-shaped. A programming contract can be a standalone task ("build a utility meeting these requirements") with no fake computer to justify it. A networking contract might involve multiple devices at once ("diagnose why the web service can't reach the database server"). The contract model shouldn't be designed around exactly one target device.
 
-**Objective types** will eventually include `ReadResource`, `CopyResource`, `ModifyResource`, `DeleteResource`, `ExecuteAction`, `GainAccess`, etc. — a real extensible objective system, later. For the first vertical slice, exactly one objective kind is hardcoded: `ObtainResource`, meaning "authenticate to the target device and read the specified resource" (proof-of-access — see Slice 1 below). The implementation shouldn't make it hard to add other objective kinds beside it later, but a general objective/rule engine is explicitly not being built yet (simple now, extensible later).
+**Objective types** will eventually include `DeleteResource`, `ExecuteAction`, `GainAccess`, etc. — a real extensible objective system, later. Slice 1 hardcodes two: `ObtainResource` ("authenticate to the target and copy the specified resource home — see `download` below) and `ModifyResource` (authenticate and overwrite the specified resource with required content, e.g. `echo ... > path` while connected). `career::contract::Objective` is the enum; adding a third kind means adding a variant plus one `ContractBoard::record_*` resolver beside `record_download`/`record_modify`, not touching `Contract`'s other fields or how contracts are stored. A general objective/rule engine is still explicitly not being built (simple now, extensible later).
 
 **Resource identity:** for now, a resource is just `{ device, AG-Linux path }` — no universal resource-ID abstraction. That gets introduced once a second OS or a non-filesystem resource type makes the need real, not before.
 
@@ -118,9 +118,9 @@ Receive credentials (handed to the player as part of the contract — no credent
     ↓
 connect <target> <username> <password>
     ↓
-Remote session (proof-of-access — the resource is read on the target, not copied back; no scp-equivalent yet)
+Remote session (authenticated on the target)
     ↓
-Read required resource
+download required resource (copies it home; `cat` alone no longer satisfies the objective)
     ↓
 Objective satisfied
     ↓
@@ -133,12 +133,80 @@ Reward (economy balance increases)
 
 Decisions locked for Slice 1 specifically (later slices can revisit any of these):
 
-- **Proof-of-access, not exfiltration.** "Obtain the resource" means successfully reading it on the target while authenticated — not transferring it back to the player's own device. Exfiltration as a distinct mechanic is future content once the loop is proven.
+- **Exfiltration, not mere proof-of-access.** "Obtain the resource" means actually copying it back to the player's own device (`download <remote-path> [local-path]`, which reads it off the target and writes it into the local device) — a `cat` on the target no longer satisfies a contract by itself. `download` is the one scp-equivalent for now, and it follows `cp`/`scp`'s own destination rule: the optional `local-path` resolves against the *local* session's cwd (not wherever `connect` currently has you); if it names an *existing* local directory, the file lands inside it under the remote file's basename, otherwise it's used as the exact destination filename (a non-existent path is never auto-created as a directory — `mkdir` it first if that's what's wanted); with no `local-path` given at all it lands under local `$HOME` by the remote file's basename. No recursive/directory transfer.
 - **Credentials are handed to the player up front.** The contract is "legitimate maintenance access," not a hack — this keeps Slice 1 about proving the loop, not about building the first exploit/credential-discovery system.
 - **`connect` takes the password as a command argument, not an interactive prompt.** Consistent with the existing, already-documented reason `sudo`/`su` aren't wired into the shell yet — no UI loop exists for hidden input.
 - **One shell session, not multiple.** `connect`/`disconnect` swap which `Device` the player's single active session is attached to (local ⇄ remote), matching the project's original pre-Phase-1 design ("active filesystem is either local or the connected remote node"). Multiple simultaneous sessions/panels is a plausible Godot-era feature, not needed now.
-- **One hardcoded objective kind (`ObtainResource`)**, one target device, no constraints yet. Reward is a simple economy balance increase — there is currently no economy/wallet system at all; Slice 1 introduces the minimal one.
+- **Two hardcoded objective kinds (`ObtainResource`, `ModifyResource`)**, one target device per contract, no constraints yet. Reward is a simple economy balance increase — there is currently no economy/wallet system at all; Slice 1 introduces the minimal one.
 
-**New systems this requires** (vs. what Phases 1–6 already provide): `Device`, `Network` (identity registry + reachability, no ports/routing/segments yet), a `Contract`/`ObtainResource` type, a minimal economy balance, a `connect`/`disconnect`-driven session that's decoupled from a device's persistent OS state (splitting today's `Shell` struct, which currently conflates OS state and session), and `connect`/`disconnect` builtins.
+**New systems this requires** (vs. what Phases 1–6 already provide): `Device`, `Network` (identity registry + reachability, no ports/routing/segments yet), a `Contract`/`Objective` type, a minimal economy balance, a `connect`/`disconnect`-driven session that's decoupled from a device's persistent OS state (splitting today's `Shell` struct, which currently conflates OS state and session), and `connect`/`disconnect` builtins.
 
-**Status:** Slice 1 is playable end to end via `cargo run`, in a real full-screen terminal UI (Ratatui + Crossterm, alternate screen + raw mode — `cargo run` takes over the terminal like any other TUI app, not a plain stdin/stdout REPL). `shell::scenario::tutorial()` boots the player's machine plus three target devices, one per job, with all three contracts posted to the board as `Available` — nothing pre-accepted. `contracts` lists available/active/completed jobs; `contracts accept <id>` takes one; `connect <host> guest guest` then `cat <resource>` resolves it and pays out through `Economy`. Command history, line editing, mouse-wheel scrolling, and Scroll Mode (`Ctrl+Space`) all working. Still missing: real credential variety (every target reuses the same `guest`/`guest` account — no way to add a distinct one yet) and objective types beyond "read this file."
+**Status:** Slice 1 is playable end to end via `cargo run`, in a real full-screen terminal UI (Ratatui + Crossterm, alternate screen + raw mode — `cargo run` takes over the terminal like any other TUI app, not a plain stdin/stdout REPL). `shell::scenario::tutorial()` boots the player's machine plus four target devices, one per job, with every contract posted to the board as `Available` — nothing pre-accepted. `contracts` lists available/active/completed jobs, including each one's login; `contracts accept <id>` takes one; `connect <host> <user> <password>` then either `download <resource> [local-path]` (three `ObtainResource` jobs — copies the resource home and pays out via `ContractBoard::record_download`) or an in-place overwrite like `echo ... > <resource>` (one `ModifyResource` job — pays out via `ContractBoard::record_modify` once the new content matches). `cat`ing a resource on its own never resolves anything. Each target has its own distinct account (`UserDatabase::add_account`, alongside the still-present default `guest`/`guest`) rather than every job reusing the same credential. Command history, line editing, mouse-wheel scrolling, and Scroll Mode (`Ctrl+Space`) all working. Still missing: objective types beyond obtain/modify (e.g. delete a resource, gain privileged access) — and, more importantly, everything Slice 2 (below) exists to fix: Slice 1's contracts hand the player the entire solution (hostname *and* credentials) up front, so there is no investigation, only execution.
+
+## Slice 2: investigation and discovery
+
+Slice 1 proved the technical loop (contract → device → network → OS seam → resolution → reward). It didn't prove the game is a *hacking* game — the player never investigates anything, because every contract already names the target and hands over its password. Slice 2's goal is narrower than it sounds: prove that a contract can describe an **outcome** ("obtain this org's customer database") without describing the **path** to it, and that the player can recover that path using systems that already exist (`Network`, `UserDatabase`, `ServiceRegistry`, `PackageManager`) plus exactly two new ones (`Organization`, `Knowledge`).
+
+```text
+Organization ("Meridian Analytics")
+      │
+      ├── meridian-web01  (seed — named by whois; only the default guest/guest
+      │                    account exists here, and a note in its home
+      │                    directory leaks a credential)
+      └── meridian-db01   (holds the actual resource, under a home directory
+                           guest/guest cannot read; reachable only once the
+                           leaked credential is reused here)
+```
+
+Flow:
+
+```text
+Accept a Guided contract ("obtain the customer database" + a coarse hint,
+no hostname, no credentials)
+    ↓
+whois <organization>              — names every device the org owns
+    ↓
+scan <device>                     — reachability, then (with nmap owned)
+                                     exposed services + versions
+    ↓
+connect to the seed device with the universal default guest/guest account
+    ↓
+cat the note left in its home directory — Knowledge records the credential
+it leaks
+    ↓
+Reuse that credential against the sibling device in the same Organization
+    ↓
+Access granted (the reused password is an authored fact — the same
+account/password was placed on both devices when the scenario was
+written, never rolled at runtime)
+    ↓
+download the required resource
+    ↓
+Objective satisfied → Contract resolved → Reward
+```
+
+Decisions locked for Slice 2:
+
+- **`Organization` is a first-class `world` type, not scenario-only data.** It holds an identity, public/flavor information, and the set of hostnames it owns — `Network` remains the single source of truth for the `Device`s themselves; `Organization` is a grouping/ownership layer on top, not a duplicate registry. This is deliberately built as real `world` state (not kept inside `shell::scenario` the way Slice 1's `Job`/`Task` are) because contracts referencing it, `Network` containing its devices, and `Knowledge` remembering the relationship are all real gameplay needs *now*, not hypothetical ones — and because reputation, multiple offices, employees, and other org metadata are foreseeable follow-ups that would otherwise force promoting scenario-private data into a world entity later. One `Organization` with 2–3 `Device`s is enough for Slice 2; the type itself should not grow beyond identity + public info + owned devices until a real need shows up.
+- **Contracts gain a notion of *lead strength*, independent of `Objective`.** Slice 1's contracts always name a concrete `target_hostname` up front (a **Directed** lead). Slice 2 adds a **Guided** lead: the contract instead names an `Organization` plus a coarse hint, and `target_hostname` is only known once the player's `Knowledge` resolves the org to an actual device they've found. `ObtainResource`/`ModifyResource` resolution (`record_download`/`record_modify`) is unchanged — it still keys on a concrete `(hostname, path)`, which now just isn't knowable at contract-post time for a Guided contract. An **Open-ended** lead (org + weak/no hint, more than one device could satisfy the objective) is a plausible Slice 3 extension of the same mechanism, not part of Slice 2.
+- **Exactly one weakness, exactly one hop: password reuse.** The seed device and the device that actually holds the resource share one account's password — placed there deliberately when the scenario is authored, the same way Slice 1's job content (file contents, credentials) is authored in `shell::scenario`, never generated at runtime. This is intentionally the smallest possible "investigation" — no privilege escalation, no config-file credential leak, no multi-step weakness chain. Those are real and worth doing (a filesystem/config-leak chain in particular), but each adds a system Slice 2 doesn't need to prove the core loop, so they're deferred.
+- **`scan` reveals information, not verdicts.** A bare `scan` (no recon tool owned) returns only reachability — today's `Network::is_reachable`, unchanged. Owning `nmap` (already an inert `Repository` entry since Phase 6) upgrades `scan`'s output to exposed services with name and version — still just data the player has to interpret, never a message telling them what to do with it. A hypothetical higher tier can eventually add a flagged indicator like "possible outdated configuration" — still an observation, not a verdict ("VULNERABILITY FOUND — USE EXPLOIT X" is explicitly the wrong shape). The player, not the tool, connects a service version or a harvested credential to the action that actually works. This preserves the AGPKG tie-in from the Software economy section above (better tools improve information depth) without turning owned software into an automatic solver — a principle intended to hold for every future recon tier, not just Slice 2's.
+- **`Knowledge` belongs to persistent player/career state, not to `Shell`.** `Shell` is session-scoped — it represents *where the player currently is* (`active_hostname`, `context`) and already happens to also hold `Economy`/`ContractBoard` today, which were introduced in Slice 1 without a dedicated persistent-state layer above `Shell`. `Knowledge` (discovered hostnames, org affiliations, service versions, harvested credentials) is what the player has *learned*, independent of where they're currently connected, and shouldn't disappear or reset with session concerns the way `context`/`active_hostname` conceptually could. The intended shape is a persistent layer above `Shell`:
+
+  ```text
+  GameState
+      └── Career               (persistent player/progress state)
+            ├── Economy
+            ├── Knowledge
+            └── Contracts / progress
+  ```
+
+  `Shell` continues to be how the CLI reaches this state (the same way builtins reach `Device`/`Network` today via `active_device()`, never by owning them outright), and a future Godot client would reach the identical `Career` state through its own UI instead of a terminal. Slice 2 does not build save/load — the ownership model is what matters now; persistence to disk is a separate, later concern. `Economy`/`ContractBoard` stay on `Shell` for Slice 2 rather than also moving into `Career` — consistency with the diagram above is a reasonable future cleanup, not required to prove the investigation loop.
+
+**New systems this required** (vs. what Slice 1 already provided): `world::Organization`/`OrganizationRegistry`; `career::Career` (holding `career::Knowledge`) as a field on `Shell` distinct from `Shell`'s own session state; `career::contract::Lead` (`Directed`/`Guided`) sitting beside `Objective`; `whois`/`scan`/`intel` builtins; a `version` field on `system::service::Service`; `world::device::CredentialLead` (an authored fact — "this exact path leaks this credential when read" — checked from `cat` via `Shell::note_credential_leads_at`); and wiring `nmap` ownership (via the existing `PackageManager`/`InstalledDatabase`) into `scan`'s actual output instead of it being inert.
+
+**Explicitly not in Slice 2** (real, worth doing, deliberately deferred so this stayed as small as Slice 1 was): privilege escalation chains, a complex vulnerability taxonomy, runtime/random vulnerability generation, detection/"heat" and consequences, an underground/black-market tier, selling intel for money, full repository tiering, multiple OS implementations, a generic exploit abstraction, and a generalized objective/rule engine.
+
+> **The player should solve authored problems by combining information and existing systems, not by waiting for a random vulnerability roll.** This is the principle every future recon tool, weakness, and objective kind should be checked against — it's what keeps the game an investigation/sandbox instead of an RPG skill check dressed up as a terminal.
+
+**Status:** implemented and playable end to end via `cargo run`. `shell::scenario::tutorial()` registers one `Organization` ("Meridian Analytics") owning two devices: `meridian-web01` (only the default `guest`/`guest` account; a `CredentialLead` on `/home/guest/todo.txt` leaks the `analyst`/`M3ridian2024` credential once that file is `cat`ed) and `meridian-db01` (the `analyst` account, home directory `chmod 0700`, holding `/home/analyst/customers.csv` — the guest account cannot reach it). One Guided contract, "Obtain the customer database" ($7,500, `Objective::ObtainResource`), is posted alongside Slice 1's four Directed jobs; `contracts` displays its `Organization` and hint but never its real hostname (`Lead::Guided`), unlike the Directed jobs' hostname+login (`Lead::Directed`). `whois <organization>` (args joined with a space, so it doesn't need quoting) lists every hostname the org owns and records the org→hostname relationship into `Career::knowledge`; `scan <hostname>` always reports reachability and, once `nmap` is installed on whichever device the player is currently at, also lists services with name/version (still no verdict, no "vulnerable" flag); `intel` reviews everything `Knowledge` has accumulated so far (discovered hosts, discovered credentials). Resolution is unchanged from Slice 1 — `download` still just triggers `ContractBoard::record_download` against the contract's real `target_hostname`, which is knowable in practice only once the player has actually found it. All of this is additive: Slice 1's four Directed jobs, `cat`/`download`/`echo >` mechanics, and every prior test are untouched. Still missing (deliberately, see above): everything under "Explicitly not in Slice 2."
