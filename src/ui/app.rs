@@ -22,6 +22,12 @@ pub enum AppMode {
     /// PageDown/Home/End navigate scrollback instead, with a status line
     /// shown so it's obvious the mode is active.
     Scroll,
+    /// Entered via Ctrl+R. Typing narrows an incremental search through
+    /// `history` (most recent entry containing the typed substring);
+    /// Ctrl+R again steps to the next older match, Enter runs the current
+    /// match immediately, Esc/Ctrl+G restores the pre-search input. Any
+    /// other key exits back to `Normal`, keeping whatever's currently shown.
+    ReverseSearch,
 }
 
 /// State for the terminal-emulator-style UI: the game session plus
@@ -39,6 +45,10 @@ pub struct App {
     pub mode: AppMode,
     viewport_height: u16,
     should_quit: bool,
+    search_query: String,
+    search_history_index: Option<usize>,
+    saved_input: String,
+    saved_cursor: usize,
 }
 
 impl App {
@@ -54,6 +64,10 @@ impl App {
             mode: AppMode::Normal,
             viewport_height: 0,
             should_quit: false,
+            search_query: String::new(),
+            search_history_index: None,
+            saved_input: String::new(),
+            saved_cursor: 0,
         };
         app.push_plain("AG Linux 1.0.0 (Blackbird) — AnalogicGoose");
         app.push_plain("Type 'contracts' to see available jobs, 'contracts accept <id>' to take one.");
@@ -69,6 +83,13 @@ impl App {
     pub fn prompt_string(&self) -> String {
         let user = self.shell.active_device().users.whoami(self.shell.context.uid).unwrap_or("?");
         format!("{user}@{}:{}$ ", self.shell.active_hostname(), self.shell.context.cwd)
+    }
+
+    /// Whether the prompt should use the remote-session color — the
+    /// hostname/cwd text already says so, but a distinct color makes it
+    /// impossible to miss mid-scrollback. See `render.rs`'s `prompt_color`.
+    pub fn is_connected_remotely(&self) -> bool {
+        self.shell.is_connected_remotely()
     }
 
     pub fn should_quit(&self) -> bool {
@@ -130,6 +151,22 @@ impl App {
         self.cursor = start;
     }
 
+    fn delete_to_line_start(&mut self) {
+        let cursor_byte = self.byte_index_of(self.cursor);
+        self.input.replace_range(0..cursor_byte, "");
+        self.cursor = 0;
+    }
+
+    fn delete_to_line_end(&mut self) {
+        let cursor_byte = self.byte_index_of(self.cursor);
+        self.input.truncate(cursor_byte);
+    }
+
+    fn clear_screen(&mut self) {
+        self.lines.clear();
+        self.scroll_offset = 0;
+    }
+
     fn move_left(&mut self) {
         self.cursor = self.cursor.saturating_sub(1);
     }
@@ -189,11 +226,22 @@ impl App {
         self.input.chars().take(self.current_word_start()).all(char::is_whitespace)
     }
 
+    /// Every whitespace-separated word before the one under the cursor —
+    /// `preceding[0]` names the command, `preceding.len()` the argument
+    /// position of the word being completed (1 = first argument). Same
+    /// lightweight whitespace scan as `current_word_start`, not the real
+    /// parser (see that method's doc comment for why).
+    fn preceding_words(&self) -> Vec<&str> {
+        self.input[..self.byte_index_of(self.current_word_start())].split_whitespace().collect()
+    }
+
     /// Completion candidates for the word under the cursor: command names
     /// (from the real `builtins::table()`, not a separate list — see
-    /// docs/GAME_DESIGN.md) for the first word, otherwise directory entries
-    /// on the active device matching what's typed so far. Each candidate is
-    /// the full replacement text for that word (directories end in `/`).
+    /// docs/GAME_DESIGN.md) for the first word; for a handful of commands
+    /// whose argument shape is known, the real candidates for that argument
+    /// (`argument_completion_candidates`); otherwise directory entries on the
+    /// active device matching what's typed so far. Each candidate is the
+    /// full replacement text for that word (directories end in `/`).
     fn completion_candidates(&self) -> Vec<String> {
         let word = self.current_word();
         if self.completing_command_name() {
@@ -202,8 +250,58 @@ impl App {
             names.sort();
             names
         } else {
-            self.path_completion_candidates(&word)
+            let preceding = self.preceding_words();
+            self.argument_completion_candidates(&preceding, &word).unwrap_or_else(|| self.path_completion_candidates(&word))
         }
+    }
+
+    /// Command/argument-specific candidates for the word under the cursor,
+    /// or `None` to fall back to generic path completion. Covers the
+    /// arguments whose real values are cheap to enumerate and worth
+    /// completing: service names, AGPKG package names, contract ids, pids.
+    fn argument_completion_candidates(&self, preceding: &[&str], partial: &str) -> Option<Vec<String>> {
+        let candidates = match preceding {
+            ["service"] => self.active_service_names(),
+            ["agpkg", "install"] => self.installable_package_names(),
+            ["agpkg", "remove"] => self.installed_package_names(),
+            ["contracts", "accept"] => self.available_contract_ids(),
+            ["kill"] => self.active_pids(),
+            _ => return None,
+        };
+        let mut matches: Vec<String> = candidates.into_iter().filter(|c| c.starts_with(partial)).collect();
+        matches.sort();
+        Some(matches)
+    }
+
+    fn active_service_names(&self) -> Vec<String> {
+        self.shell.active_device().services.list().into_iter().map(|s| s.name.clone()).collect()
+    }
+
+    /// AGPKG catalog entries not already installed — installing an
+    /// already-installed package is just an error, so it's not worth
+    /// offering as a completion candidate.
+    fn installable_package_names(&self) -> Vec<String> {
+        let device = self.shell.active_device();
+        device
+            .packages
+            .repository
+            .all()
+            .into_iter()
+            .filter(|m| !device.packages.installed.is_installed(&m.name))
+            .map(|m| m.name.clone())
+            .collect()
+    }
+
+    fn installed_package_names(&self) -> Vec<String> {
+        self.shell.active_device().packages.installed.list().into_iter().map(|p| p.name.clone()).collect()
+    }
+
+    fn available_contract_ids(&self) -> Vec<String> {
+        self.shell.contracts.available().map(|c| c.id.to_string()).collect()
+    }
+
+    fn active_pids(&self) -> Vec<String> {
+        self.shell.active_device().processes.list().into_iter().map(|p| p.pid.to_string()).collect()
     }
 
     fn path_completion_candidates(&self, partial: &str) -> Vec<String> {
@@ -291,11 +389,62 @@ impl App {
         }
     }
 
+    fn reverse_search_match(&self, query: &str, upper: usize) -> Option<usize> {
+        self.history[..upper].iter().rposition(|entry| entry.contains(query))
+    }
+
+    /// Re-runs the search from the most recent history entry, called after
+    /// every query edit (typing a char, backspacing). Falls back to the
+    /// pre-search input once the query goes empty.
+    fn refresh_reverse_search(&mut self) {
+        if self.search_query.is_empty() {
+            self.search_history_index = None;
+            self.input = self.saved_input.clone();
+            self.cursor = self.char_len();
+            return;
+        }
+        self.search_history_index = self.reverse_search_match(&self.search_query, self.history.len());
+        if let Some(i) = self.search_history_index {
+            self.input = self.history[i].clone();
+            self.cursor = self.char_len();
+        }
+    }
+
+    /// Ctrl+R while already searching: steps to the next older match for the
+    /// same query, if any. A no-op until at least one match has been found.
+    fn reverse_search_older(&mut self) {
+        let Some(current) = self.search_history_index else { return };
+        if let Some(i) = self.reverse_search_match(&self.search_query, current) {
+            self.search_history_index = Some(i);
+            self.input = self.history[i].clone();
+            self.cursor = self.char_len();
+        }
+    }
+
+    fn start_reverse_search(&mut self) {
+        self.saved_input = self.input.clone();
+        self.saved_cursor = self.cursor;
+        self.search_query.clear();
+        self.search_history_index = None;
+        self.mode = AppMode::ReverseSearch;
+    }
+
+    fn cancel_reverse_search(&mut self) {
+        self.input = self.saved_input.clone();
+        self.cursor = self.saved_cursor;
+        self.mode = AppMode::Normal;
+    }
+
+    pub fn search_query(&self) -> &str {
+        &self.search_query
+    }
+
     fn submit(&mut self) {
         let input = self.input.clone();
         let prompt = self.prompt_string();
+        let prompt_color = if self.is_connected_remotely() { Color::Cyan } else { Color::Green };
         self.lines.push(Line::from(vec![
-            Span::styled(prompt, Style::default().fg(Color::Green)),
+            Span::styled(prompt, Style::default().fg(prompt_color)),
             Span::raw(input.clone()),
         ]));
 
@@ -336,6 +485,10 @@ impl App {
                 self.scroll_offset = 0;
                 AppMode::Normal
             }
+            // Ctrl+Space during an active reverse-search: same fallback as
+            // any other unhandled key there (see the ReverseSearch branch
+            // in handle_key) — just drops out of search, keeping the match.
+            AppMode::ReverseSearch => AppMode::Scroll,
         };
     }
 
@@ -374,6 +527,30 @@ impl App {
 
     pub fn handle_key(&mut self, key: KeyEvent) {
         if key.kind != KeyEventKind::Press {
+            return;
+        }
+
+        if self.mode == AppMode::ReverseSearch {
+            let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+            match key.code {
+                KeyCode::Char('r') if ctrl => self.reverse_search_older(),
+                KeyCode::Char('g') if ctrl => self.cancel_reverse_search(),
+                KeyCode::Char('c') if ctrl => self.cancel_reverse_search(),
+                KeyCode::Char(c) if !ctrl => {
+                    self.search_query.push(c);
+                    self.refresh_reverse_search();
+                }
+                KeyCode::Backspace => {
+                    self.search_query.pop();
+                    self.refresh_reverse_search();
+                }
+                KeyCode::Enter => {
+                    self.mode = AppMode::Normal;
+                    self.submit();
+                }
+                KeyCode::Esc => self.cancel_reverse_search(),
+                _ => self.mode = AppMode::Normal,
+            }
             return;
         }
 
@@ -417,6 +594,12 @@ impl App {
                 // Ctrl+W is the traditional, near-universally reliable
                 // readline binding for the same action.
                 KeyCode::Backspace | KeyCode::Char('w') => self.delete_word_before_cursor(),
+                KeyCode::Char('a') => self.cursor = 0,
+                KeyCode::Char('e') => self.cursor = self.char_len(),
+                KeyCode::Char('u') => self.delete_to_line_start(),
+                KeyCode::Char('k') => self.delete_to_line_end(),
+                KeyCode::Char('l') => self.clear_screen(),
+                KeyCode::Char('r') => self.start_reverse_search(),
                 _ => {}
             }
             return;
@@ -459,8 +642,9 @@ pub fn run<B: Backend>(terminal: &mut Terminal<B>) -> std::io::Result<()> {
     loop {
         let full_height = terminal.size()?.height;
         // Must match render.rs's own split: the status line steals one row
-        // from the scrollback while Scroll Mode is active.
-        let viewport_height = if app.mode == AppMode::Scroll { full_height.saturating_sub(1) } else { full_height };
+        // from the scrollback while Scroll Mode or reverse-search is active.
+        let viewport_height =
+            if app.mode == AppMode::Scroll || app.mode == AppMode::ReverseSearch { full_height.saturating_sub(1) } else { full_height };
         app.set_viewport_height(viewport_height);
 
         terminal.draw(|frame| render::draw(frame, &app))?;
@@ -600,6 +784,120 @@ mod tests {
         app.handle_key(ctrl(KeyCode::Backspace));
         assert_eq!(app.input, "");
         assert_eq!(app.cursor, 0);
+    }
+
+    #[test]
+    fn ctrl_a_and_ctrl_e_jump_to_line_boundaries() {
+        let mut app = App::new();
+        type_str(&mut app, "connect corp-fs01");
+        app.handle_key(ctrl(KeyCode::Char('a')));
+        assert_eq!(app.cursor, 0);
+        app.handle_key(ctrl(KeyCode::Char('e')));
+        assert_eq!(app.cursor, app.input.chars().count());
+    }
+
+    #[test]
+    fn ctrl_u_deletes_from_cursor_to_line_start() {
+        let mut app = App::new();
+        type_str(&mut app, "connect corp-fs01");
+        app.handle_key(key(KeyCode::Left));
+        app.handle_key(key(KeyCode::Left));
+        app.handle_key(ctrl(KeyCode::Char('u')));
+        assert_eq!(app.input, "01");
+        assert_eq!(app.cursor, 0);
+    }
+
+    #[test]
+    fn ctrl_k_deletes_from_cursor_to_line_end() {
+        let mut app = App::new();
+        type_str(&mut app, "connect corp-fs01");
+        app.handle_key(key(KeyCode::Left));
+        app.handle_key(key(KeyCode::Left));
+        app.handle_key(ctrl(KeyCode::Char('k')));
+        assert_eq!(app.input, "connect corp-fs");
+        assert_eq!(app.cursor, app.input.chars().count());
+    }
+
+    #[test]
+    fn ctrl_l_clears_the_scrollback() {
+        let mut app = App::new();
+        assert!(!app.lines.is_empty());
+        app.handle_key(ctrl(KeyCode::Char('l')));
+        assert!(app.lines.is_empty());
+        assert_eq!(app.scroll_offset, 0);
+    }
+
+    #[test]
+    fn ctrl_r_starts_reverse_search_and_shows_the_most_recent_match() {
+        let mut app = App::new();
+        submit_line(&mut app, "connect corp-fs01 admin admin123");
+        submit_line(&mut app, "whoami");
+        app.handle_key(ctrl(KeyCode::Char('r')));
+        assert_eq!(app.mode, AppMode::ReverseSearch);
+        type_str(&mut app, "conn");
+        assert_eq!(app.input, "connect corp-fs01 admin admin123");
+    }
+
+    #[test]
+    fn ctrl_r_again_steps_to_an_older_match() {
+        let mut app = App::new();
+        submit_line(&mut app, "connect corp-fs01 admin admin123");
+        // "whoami" deliberately doesn't contain "connect" as a substring —
+        // "disconnect" would, which is a legitimate match, not noise.
+        submit_line(&mut app, "whoami");
+        submit_line(&mut app, "connect meridian-web01 guest guest");
+        app.handle_key(ctrl(KeyCode::Char('r')));
+        type_str(&mut app, "connect");
+        assert_eq!(app.input, "connect meridian-web01 guest guest");
+        app.handle_key(ctrl(KeyCode::Char('r')));
+        assert_eq!(app.input, "connect corp-fs01 admin admin123");
+    }
+
+    #[test]
+    fn escape_cancels_reverse_search_and_restores_the_original_input() {
+        let mut app = App::new();
+        submit_line(&mut app, "whoami");
+        type_str(&mut app, "ps");
+        app.handle_key(ctrl(KeyCode::Char('r')));
+        type_str(&mut app, "who");
+        assert_eq!(app.input, "whoami");
+        app.handle_key(key(KeyCode::Esc));
+        assert_eq!(app.mode, AppMode::Normal);
+        assert_eq!(app.input, "ps");
+    }
+
+    #[test]
+    fn enter_during_reverse_search_runs_the_matched_command() {
+        let mut app = App::new();
+        submit_line(&mut app, "whoami");
+        app.handle_key(ctrl(KeyCode::Char('r')));
+        type_str(&mut app, "who");
+        app.handle_key(key(KeyCode::Enter));
+        assert_eq!(app.mode, AppMode::Normal);
+        assert_eq!(app.input, "");
+        assert_eq!(app.history.len(), 1);
+        assert_eq!(app.history[0], "whoami");
+    }
+
+    #[test]
+    fn an_unhandled_key_during_reverse_search_exits_to_normal_mode_keeping_the_match() {
+        let mut app = App::new();
+        submit_line(&mut app, "whoami");
+        app.handle_key(ctrl(KeyCode::Char('r')));
+        type_str(&mut app, "who");
+        app.handle_key(key(KeyCode::Left));
+        assert_eq!(app.mode, AppMode::Normal);
+        assert_eq!(app.input, "whoami");
+    }
+
+    #[test]
+    fn reverse_search_with_no_match_does_not_panic_or_clear_the_query() {
+        let mut app = App::new();
+        submit_line(&mut app, "whoami");
+        app.handle_key(ctrl(KeyCode::Char('r')));
+        type_str(&mut app, "zzz");
+        assert_eq!(app.search_query(), "zzz");
+        assert_eq!(app.mode, AppMode::ReverseSearch);
     }
 
     #[test]
@@ -837,6 +1135,76 @@ mod tests {
         type_str(&mut app, "cd sub");
         app.handle_key(key(KeyCode::Tab));
         assert_eq!(app.input, "cd subdir/");
+    }
+
+    #[test]
+    fn tab_completes_a_service_name_for_the_service_command() {
+        let mut app = App::new();
+        type_str(&mut app, "service ss");
+        app.handle_key(key(KeyCode::Tab));
+        assert_eq!(app.input, "service sshd ");
+    }
+
+    #[test]
+    fn tab_completes_an_installable_package_name_for_agpkg_install() {
+        let mut app = App::new();
+        type_str(&mut app, "agpkg install nm");
+        app.handle_key(key(KeyCode::Tab));
+        assert_eq!(app.input, "agpkg install nmap ");
+    }
+
+    #[test]
+    fn tab_only_offers_not_yet_installed_packages_for_agpkg_install() {
+        let mut app = App::new();
+        app.shell.active_device_mut().packages.installed.insert(crate::package::InstalledPackage {
+            name: "nmap".to_string(),
+            version: "7.94".to_string(),
+            explicit: true,
+        });
+        type_str(&mut app, "agpkg install nm");
+        let lines_before = app.lines.len();
+        app.handle_key(key(KeyCode::Tab));
+        assert_eq!(app.input, "agpkg install nm"); // already installed — no candidates left
+        assert_eq!(app.lines.len(), lines_before);
+    }
+
+    #[test]
+    fn tab_completes_an_installed_package_name_for_agpkg_remove() {
+        let mut app = App::new();
+        app.shell.active_device_mut().packages.installed.insert(crate::package::InstalledPackage {
+            name: "nmap".to_string(),
+            version: "7.94".to_string(),
+            explicit: true,
+        });
+        type_str(&mut app, "agpkg remove nm");
+        app.handle_key(key(KeyCode::Tab));
+        assert_eq!(app.input, "agpkg remove nmap ");
+    }
+
+    #[test]
+    fn tab_completes_an_available_contract_id_for_contracts_accept() {
+        let mut app = App::new();
+        type_str(&mut app, "contracts accept 1");
+        app.handle_key(key(KeyCode::Tab));
+        assert_eq!(app.input, "contracts accept 1 ");
+    }
+
+    #[test]
+    fn tab_completes_a_pid_for_kill() {
+        let mut app = App::new();
+        type_str(&mut app, "kill 2");
+        app.handle_key(key(KeyCode::Tab));
+        assert_eq!(app.input, "kill 2 ");
+    }
+
+    #[test]
+    fn is_connected_remotely_reflects_shell_state() {
+        let mut app = App::new();
+        assert!(!app.is_connected_remotely());
+        submit_line(&mut app, "connect corp-fs01 admin admin123");
+        assert!(app.is_connected_remotely());
+        submit_line(&mut app, "disconnect");
+        assert!(!app.is_connected_remotely());
     }
 
     #[test]

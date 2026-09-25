@@ -46,8 +46,10 @@ enum RawToken {
 
 /// Parses one input line into a pipeline of commands, expanding `$VAR`/`${VAR}`
 /// against `env` (skipped inside single quotes, applied inside double quotes
-/// and bare words — same rule real shells use). No globbing, no backslash
-/// escaping, no `;`/`&&`/`||` chaining — not needed yet, keeps this small.
+/// and bare words — same rule real shells use), plus a leading `~` (only as
+/// the first character of a word, followed by `/`/whitespace/end-of-input) to
+/// `env["HOME"]`. No globbing, no backslash escaping, no `;`/`&&`/`||`
+/// chaining — not needed yet, keeps this small.
 pub fn parse(input: &str, env: &HashMap<String, String>) -> Result<Pipeline, ParseError> {
     let tokens = tokenize(input, env)?;
     group_into_pipeline(tokens)
@@ -108,6 +110,19 @@ fn tokenize(input: &str, env: &HashMap<String, String>) -> Result<Vec<RawToken>,
             '$' => {
                 in_token = true;
                 expand_var(&mut chars, &mut current, env);
+            }
+            '~' if !in_token => {
+                in_token = true;
+                match chars.peek() {
+                    None | Some('/') | Some(' ') | Some('\t') => {
+                        if let Some(home) = env.get("HOME") {
+                            current.push_str(home);
+                        } else {
+                            current.push('~');
+                        }
+                    }
+                    _ => current.push('~'),
+                }
             }
             other => {
                 in_token = true;
@@ -234,6 +249,21 @@ mod tests {
     fn unknown_var_expands_to_empty() {
         let p = parse("echo $NOPE", &env()).unwrap();
         assert_eq!(p.stages[0].argv, vec!["echo", ""]);
+    }
+
+    #[test]
+    fn tilde_expands_to_home_as_the_first_char_of_a_word() {
+        let p = parse("cd ~", &env()).unwrap();
+        assert_eq!(p.stages[0].argv, vec!["cd", "/home/guest"]);
+
+        let p = parse("cd ~/docs", &env()).unwrap();
+        assert_eq!(p.stages[0].argv, vec!["cd", "/home/guest/docs"]);
+    }
+
+    #[test]
+    fn tilde_mid_word_or_for_another_user_is_left_literal() {
+        let p = parse("echo foo~bar ~guest", &env()).unwrap();
+        assert_eq!(p.stages[0].argv, vec!["echo", "foo~bar", "~guest"]);
     }
 
     #[test]

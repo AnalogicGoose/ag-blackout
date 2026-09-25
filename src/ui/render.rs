@@ -9,12 +9,14 @@ use super::app::{App, AppMode};
 /// Renders one continuous scrollback pane — no borders, no separate input
 /// box — so it reads as a real terminal rather than a Ratatui app with a
 /// terminal widget inside it. The in-progress input line is appended as the
-/// last line so it scrolls with everything else. In `Scroll` mode a status
+/// last line so it scrolls with everything else. In `Scroll` mode, and while
+/// an incremental reverse-history search (`Ctrl+R`) is in progress, a status
 /// line is reserved at the bottom so the mode is never silently active.
 pub fn draw(frame: &mut Frame, app: &App) {
     let full_area = frame.size();
 
-    let (area, status_area) = if app.mode == AppMode::Scroll {
+    let reserves_status_row = matches!(app.mode, AppMode::Scroll | AppMode::ReverseSearch);
+    let (area, status_area) = if reserves_status_row {
         let chunks = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).split(full_area);
         (chunks[0], Some(chunks[1]))
     } else {
@@ -22,17 +24,31 @@ pub fn draw(frame: &mut Frame, app: &App) {
     };
 
     let prompt = app.prompt_string();
-    let mut input_spans = vec![
-        Span::styled(prompt.clone(), Style::default().fg(Color::Green)),
-        Span::raw(app.input.clone()),
-    ];
-    if let Some(suggestion) = app.suggestion() {
-        // Fish-style: the remainder of a matching history entry, dimmed,
-        // shown right after the cursor. Never part of the real input until
-        // accepted (Right arrow at end of line — see App::accept_suggestion).
-        input_spans.push(Span::styled(suggestion, Style::default().fg(Color::DarkGray)));
-    }
-    let input_line = Line::from(input_spans);
+    let input_line = if app.mode == AppMode::ReverseSearch {
+        // Bash-style: the normal prompt is replaced by the search prompt
+        // while searching, showing whichever history entry currently matches.
+        Line::from(vec![
+            Span::styled(format!("(reverse-i-search)`{}': ", app.search_query()), Style::default().fg(Color::Yellow)),
+            Span::raw(app.input.clone()),
+        ])
+    } else {
+        // A distinct prompt color while connected to a remote device — the
+        // hostname/cwd text already says so (App::prompt_string), but a
+        // color cue makes it impossible to miss mid-scrollback, especially
+        // once output has scrolled the earlier `connect` line out of view.
+        let prompt_color = if app.is_connected_remotely() { Color::Cyan } else { Color::Green };
+        let mut input_spans = vec![
+            Span::styled(prompt.clone(), Style::default().fg(prompt_color)),
+            Span::raw(app.input.clone()),
+        ];
+        if let Some(suggestion) = app.suggestion() {
+            // Fish-style: the remainder of a matching history entry, dimmed,
+            // shown right after the cursor. Never part of the real input until
+            // accepted (Right arrow at end of line — see App::accept_suggestion).
+            input_spans.push(Span::styled(suggestion, Style::default().fg(Color::DarkGray)));
+        }
+        Line::from(input_spans)
+    };
 
     let mut lines = app.lines.clone();
     lines.push(input_line);
@@ -48,16 +64,23 @@ pub fn draw(frame: &mut Frame, app: &App) {
     frame.render_widget(paragraph, area);
 
     if let Some(status_area) = status_area {
-        let status = Paragraph::new(Line::from(Span::styled(
-            "-- SCROLL MODE -- \u{2191}/\u{2193} PgUp/PgDn Home/End to navigate, Ctrl+Shift+Space or Esc to exit",
-            Style::default().fg(Color::Black).bg(Color::Yellow),
-        )));
-        frame.render_widget(status, status_area);
+        let status_line = match app.mode {
+            AppMode::Scroll => Line::from(Span::styled(
+                "-- SCROLL MODE -- \u{2191}/\u{2193} PgUp/PgDn Home/End to navigate, Ctrl+Shift+Space or Esc to exit",
+                Style::default().fg(Color::Black).bg(Color::Yellow),
+            )),
+            AppMode::ReverseSearch => Line::from(Span::styled(
+                "-- REVERSE SEARCH -- type to narrow, Ctrl+R for an older match, Enter to run, Esc to cancel",
+                Style::default().fg(Color::Black).bg(Color::Yellow),
+            )),
+            AppMode::Normal => unreachable!("status_area is only Some in Scroll or ReverseSearch mode"),
+        };
+        frame.render_widget(Paragraph::new(status_line), status_area);
     }
 
     // Only show a live cursor in Normal mode while following the bottom —
-    // in Scroll mode, or once scrolled back into history, nothing is being
-    // edited in view.
+    // in Scroll/ReverseSearch mode, or once scrolled back into history,
+    // nothing is being edited in view via the real cursor.
     if app.mode == AppMode::Normal && app.scroll_offset == 0 {
         // The input line is content row `total - 1`; its screen row is that
         // minus however much got scrolled off the top. Using the viewport's

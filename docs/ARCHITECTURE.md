@@ -116,17 +116,15 @@ AG: Blackout's terminal is a **gameplay interface**, not an attempt at a fully P
 - Terminal colors: green prompt, red stderr, dim gray autosuggestions, black-on-yellow Scroll Mode status bar (`render.rs`).
 - Redraw: the whole frame is repainted from `App` state every event-loop tick (`ui::app::run`) — see "Known simplifications" below for the two known cosmetic edge cases around wrapped lines.
 - Resize handling (basic): `run()` re-reads `terminal.size()` and redraws every loop tick (bounded by the 250ms poll timeout), so a resized terminal reflows within that window. There's no dedicated `Event::Resize` handler doing it instantly, but nothing breaks or needs a manual redraw either.
+- `Ctrl+A` / `Ctrl+E` — jump to beginning/end of line (Emacs-style bindings alongside Home/End, which already do this).
+- `Ctrl+U` / `Ctrl+K` — delete from cursor to beginning/end of line (`App::delete_to_line_start`/`delete_to_line_end`).
+- `Ctrl+L` — clears the scrollback (`App::clear_screen`); there's no separate "redraw" step to distinguish since the whole frame repaints from `App` state every tick anyway.
+- `~` as shorthand for the home directory in path arguments, expanded in `shell::parser::tokenize` against `env["HOME"]` — only as the first character of a word, followed by `/`/whitespace/end-of-input (so `~someuser` and mid-word `~` are left literal, matching real shells; no per-user home lookup is modeled).
+- `Ctrl+R` — incremental reverse history search (`AppMode::ReverseSearch`), bash-style: typing narrows to the most recent history entry containing the query as a substring, `Ctrl+R` again steps to the next older match, `Enter` runs the matched command immediately, `Esc`/`Ctrl+G` restores the pre-search input line. Any other key exits back to `Normal` keeping whatever's currently shown, rather than also applying that key's own effect — a deliberate simplification, along with pressing `Ctrl+R` a second time on an empty query being a no-op instead of stepping through unfiltered history like real bash.
+- Argument-aware Tab completion for the five commands where it was practical (`App::argument_completion_candidates`): service names for `service`, not-yet-installed catalog names for `agpkg install`, installed package names for `agpkg remove`, available contract ids for `contracts accept`, and pids for `kill`. Determined by a lightweight whitespace scan of the words before the one being completed (`App::preceding_words`), same non-parser approach as the rest of Tab completion — not by command/position generally, so any other command's arguments still fall back to generic path completion.
+- A distinct cyan prompt color while connected to a remote device (`App::is_connected_remotely`, used in both `render.rs`'s live input line and `App::submit`'s scrollback echo) — on top of the existing hostname/cwd text, so it's harder to miss once earlier `connect` output has scrolled out of view.
 
-**Planned QoL** (not yet built; real candidates for later, not a commitment to build all of them):
-
-- `Ctrl+A` / `Ctrl+E` — jump to beginning/end of line (Home/End already do this; these are the Emacs-style bindings Fish/bash also support alongside them).
-- `Ctrl+U` — delete from cursor to beginning of line.
-- `Ctrl+K` — delete from cursor to end of line.
-- `Ctrl+R` — reverse history search.
-- `Ctrl+L` — clear/redraw the screen.
-- `~` as shorthand for the home directory in path arguments (today only the `$HOME` env var works, e.g. `cd $HOME`).
-- Argument-aware Tab completion for commands where it's practical: service names for `service`, package names for `agpkg install`/`remove`, contract ids for `contracts accept`, pids for `kill`. Today only the first word (command name) and generic paths complete — a command's own arguments don't know their own shape yet.
-- A more visible local-vs-remote cue beyond the hostname text itself (e.g. a distinct prompt color while connected to a remote device) — the information is already there, just not visually emphasized.
+**Planned QoL** (not yet built; real candidates for later, not a commitment to build all of them): none currently — see "Explicitly out of scope" below for what's deliberately never planned.
 
 **Explicitly out of scope:** full POSIX shell compatibility; real syscalls/TTY/PTY; real process/job control (`Ctrl+Z`/suspension); a shell scripting language; Fish functions/abbreviations; a configurable keybinding system; full Bash/Fish syntax highlighting; fuzzy-finding; "perfect" contextual completion for every command. None of these make the game more playable — they'd only make the terminal harder to reason about for no gameplay benefit, the same reasoning [`GAME_DESIGN.md`](./GAME_DESIGN.md)'s Core gameplay philosophy already applies elsewhere ("systems producing gameplay... not a production shell").
 
