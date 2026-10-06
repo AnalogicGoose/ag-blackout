@@ -1,4 +1,5 @@
 use super::knowledge::Knowledge;
+use super::tutorial::TutorialProgress;
 
 /// The persistent player/progress layer that sits above a `Shell` session.
 /// `Shell` is session-scoped (where the player currently is); `Knowledge` is
@@ -10,6 +11,7 @@ use super::knowledge::Knowledge;
 #[derive(Default)]
 pub struct Career {
     pub knowledge: Knowledge,
+    pub tutorial: TutorialProgress,
 }
 
 impl Career {

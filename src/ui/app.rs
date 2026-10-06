@@ -8,8 +8,9 @@ use ratatui::backend::Backend;
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 
+use crate::career::{CoreLesson, LessonId};
 use crate::filesystem::VirtualPath;
-use crate::shell::{LineResult, Shell, builtins, parser, scenario};
+use crate::shell::{GameSession, LineResult, builtins, parser, scenario};
 
 use super::render;
 
@@ -37,7 +38,7 @@ pub enum AppMode {
 /// Deliberately holds no `Terminal`/backend — that's `terminal.rs`'s job —
 /// so this stays testable without a real TTY (see the tests below).
 pub struct App {
-    shell: Shell,
+    game: GameSession,
     pub lines: Vec<Line<'static>>,
     pub input: String,
     pub cursor: usize,
@@ -58,7 +59,7 @@ pub struct App {
 impl App {
     pub fn new() -> Self {
         let mut app = App {
-            shell: scenario::tutorial(),
+            game: GameSession::new(scenario::tutorial()),
             lines: Vec::new(),
             input: String::new(),
             cursor: 0,
@@ -77,9 +78,9 @@ impl App {
         };
         app.push_plain("AG Linux 1.0.0 (Blackbird) — AnalogicGoose");
         app.push_plain(
-            "Type 'contracts' to see available jobs, 'contracts accept <id>' to take one.",
+            "Type 'tutorial' to see guided lessons, or 'tutorial start terminal' to begin.",
         );
-        app.push_plain("Some jobs hand over a target and login directly; others only give you a lead to investigate.");
+        app.push_plain("Use 'help' to see all commands and '<command> --help' for details.");
         app.push_plain("");
         app
     }
@@ -90,15 +91,16 @@ impl App {
 
     pub fn prompt_string(&self) -> String {
         let user = self
-            .shell
+            .game
+            .active_shell()
             .active_device()
             .users
-            .whoami(self.shell.context.uid)
+            .whoami(self.game.active_shell().context.uid)
             .unwrap_or("?");
         format!(
             "{user}@{}:{}$ ",
-            self.shell.active_hostname(),
-            self.shell.context.cwd
+            self.game.active_shell().active_hostname(),
+            self.game.active_shell().context.cwd
         )
     }
 
@@ -106,7 +108,7 @@ impl App {
     /// hostname/cwd text already says so, but a distinct color makes it
     /// impossible to miss mid-scrollback. See `render.rs`'s `prompt_color`.
     pub fn is_connected_remotely(&self) -> bool {
-        self.shell.is_connected_remotely()
+        self.game.active_shell().is_connected_remotely()
     }
 
     pub fn should_quit(&self) -> bool {
@@ -300,16 +302,23 @@ impl App {
         partial: &str,
     ) -> Option<Vec<String>> {
         let candidates = match preceding {
+            ["tutorial"] => vec!["list", "start", "hint", "leave"]
+                .into_iter()
+                .map(str::to_string)
+                .collect(),
+            ["tutorial", "start"] => vec!["terminal".to_string()],
             ["service"] => self.active_service_names(),
             ["exploit"] => self
-                .shell
+                .game
+                .active_shell()
                 .career
                 .knowledge
                 .hostnames()
                 .map(str::to_string)
                 .collect(),
             ["exploit", hostname] => self
-                .shell
+                .game
+                .active_shell()
                 .career
                 .knowledge
                 .services()
@@ -331,7 +340,8 @@ impl App {
     }
 
     fn active_service_names(&self) -> Vec<String> {
-        self.shell
+        self.game
+            .active_shell()
             .active_device()
             .services
             .list()
@@ -344,7 +354,7 @@ impl App {
     /// already-installed package is just an error, so it's not worth
     /// offering as a completion candidate.
     fn installable_package_names(&self) -> Vec<String> {
-        let device = self.shell.active_device();
+        let device = self.game.active_shell().active_device();
         device
             .packages
             .repository
@@ -356,7 +366,8 @@ impl App {
     }
 
     fn installed_package_names(&self) -> Vec<String> {
-        self.shell
+        self.game
+            .active_shell()
             .active_device()
             .packages
             .installed
@@ -367,7 +378,8 @@ impl App {
     }
 
     fn available_contract_ids(&self) -> Vec<String> {
-        self.shell
+        self.game
+            .active_shell()
             .contracts
             .available()
             .map(|c| c.id.to_string())
@@ -375,7 +387,8 @@ impl App {
     }
 
     fn active_pids(&self) -> Vec<String> {
-        self.shell
+        self.game
+            .active_shell()
             .active_device()
             .processes
             .list()
@@ -390,16 +403,17 @@ impl App {
             None => ("", partial),
         };
         let dir_path = if dir_part.is_empty() {
-            self.shell.context.cwd.clone()
+            self.game.active_shell().context.cwd.clone()
         } else {
-            match VirtualPath::resolve(&self.shell.context.cwd, dir_part) {
+            match VirtualPath::resolve(&self.game.active_shell().context.cwd, dir_part) {
                 Ok(p) => p,
                 Err(_) => return Vec::new(),
             }
         };
-        let access = self.shell.context.fs_access();
+        let access = self.game.active_shell().context.fs_access();
         let Ok(mut entries) = self
-            .shell
+            .game
+            .active_shell()
             .active_device()
             .filesystem
             .list_dir(&access, &dir_path)
@@ -560,12 +574,28 @@ impl App {
         if self.history.last().map(String::as_str) != Some(trimmed) {
             self.history.push(trimmed.to_string());
         }
+        if trimmed == "clear" {
+            let result = self.game.execute_line(trimmed);
+            if result.exit_code == 0 {
+                self.clear_screen();
+            } else {
+                self.show_result(result, self.game.active_shell().economy.balance());
+            }
+            return;
+        }
+        if self.handle_tutorial_command(trimmed) {
+            return;
+        }
         if trimmed == "exit" || trimmed == "quit" {
-            self.should_quit = true;
+            if self.game.leave_lesson() {
+                self.push_plain("Returned to campaign.");
+            } else {
+                self.should_quit = true;
+            }
             return;
         }
 
-        let needs_sudo_prompt = parser::parse(trimmed, &self.shell.context.env)
+        let needs_sudo_prompt = parser::parse(trimmed, &self.game.active_shell().context.env)
             .ok()
             .is_some_and(|pipeline| {
                 if pipeline.stages.len() != 1 {
@@ -578,20 +608,24 @@ impl App {
                     && !matches!(stage.argv[1].as_str(), "-h" | "--help")
             });
 
-        if needs_sudo_prompt && !self.shell.sudo_is_cached() {
-            let device = self.shell.active_device();
+        if needs_sudo_prompt && !self.game.active_shell().sudo_is_cached() {
+            let device = self.game.active_shell().active_device();
             if device
                 .sudoers
-                .permits(&device.users, self.shell.context.uid)
+                .permits(&device.users, self.game.active_shell().context.uid)
             {
                 self.pending_sudo = Some(trimmed.to_string());
                 return;
             }
         }
 
-        let balance_before = self.shell.economy.balance();
-        let result = self.shell.execute_line(trimmed);
+        let balance_before = self.game.active_shell().economy.balance();
+        let was_completed = self.game.lesson_completed();
+        let result = self.game.execute_line(trimmed);
         self.show_result(result, balance_before);
+        if !was_completed && self.game.lesson_completed() {
+            self.push_plain("Terminal lesson complete! Use 'tutorial leave' to return.");
+        }
     }
 
     fn toggle_scroll_mode(&mut self) {
@@ -755,10 +789,11 @@ impl App {
     pub fn sudo_prompt(&self) -> Option<String> {
         self.pending_sudo.as_ref()?;
         let user = self
-            .shell
+            .game
+            .active_shell()
             .active_device()
             .users
-            .whoami(self.shell.context.uid)
+            .whoami(self.game.active_shell().context.uid)
             .unwrap_or("unknown");
         Some(format!("[sudo] password for {user}: "))
     }
@@ -773,10 +808,10 @@ impl App {
                 Style::default().fg(Color::Red),
             )));
         }
-        if self.shell.economy.balance() != balance_before {
+        if self.game.active_shell().economy.balance() != balance_before {
             self.push_plain(format!(
                 "Contract complete — balance: ${}",
-                self.shell.economy.balance()
+                self.game.active_shell().economy.balance()
             ));
         }
     }
@@ -790,8 +825,11 @@ impl App {
 
                 let command = self.pending_sudo.take().unwrap();
                 let password = std::mem::take(&mut self.sudo_password);
-                let balance_before = self.shell.economy.balance();
-                let result = self.shell.execute_sudo(&command, &password);
+                let balance_before = self.game.active_shell().economy.balance();
+                let result = self
+                    .game
+                    .active_shell_mut()
+                    .execute_sudo(&command, &password);
                 self.show_result(result, balance_before);
             }
             KeyCode::Esc => {
@@ -809,6 +847,72 @@ impl App {
             }
             KeyCode::Char(c) if !ctrl => self.sudo_password.push(c),
             _ => {}
+        }
+    }
+
+    fn handle_tutorial_command(&mut self, input: &str) -> bool {
+        match input.split_whitespace().collect::<Vec<_>>().as_slice() {
+            ["tutorial", "-h" | "--help"] => {
+                for line in builtins::help_text("tutorial").lines() {
+                    self.push_plain(line.to_string());
+                }
+                true
+            }
+            ["tutorial"] | ["tutorial", "list"] => {
+                let done = self
+                    .game
+                    .campaign()
+                    .career
+                    .tutorial
+                    .core_completed(CoreLesson::Terminal);
+                self.push_plain(format!(
+                    "Terminal — {}",
+                    if done {
+                        "completed; replay available"
+                    } else {
+                        "available"
+                    }
+                ));
+                self.push_plain("Start: tutorial start terminal");
+                true
+            }
+            ["tutorial", "start", "terminal"] => {
+                match self.game.start_lesson(LessonId::Core(CoreLesson::Terminal)) {
+                    Ok(()) => {
+                        self.push_plain("Terminal practice");
+                        self.push_plain(
+                            "You are on a practice machine. Use pwd to see your location and ls to inspect its files.",
+                        );
+                        self.push_plain(
+                            "Goal: read intro.txt with cat. Use 'tutorial hint' if you get stuck.",
+                        );
+                        self.push_plain("Use 'tutorial leave' to return to your campaign.");
+                    }
+                    Err(error) => self.push_plain(format!("tutorial: {error}")),
+                }
+                true
+            }
+            ["tutorial", "hint"] => {
+                if self.game.active_lesson() == Some(LessonId::Core(CoreLesson::Terminal)) {
+                    self.push_plain("Hint: list the files in your current directory, then use cat on the one named intro.txt.");
+                } else {
+                    self.push_plain("tutorial: no lesson is active");
+                }
+                true
+            }
+            ["tutorial", "leave"] => {
+                if self.game.leave_lesson() {
+                    self.push_plain("Returned to campaign.");
+                } else {
+                    self.push_plain("tutorial: no lesson is active");
+                }
+                true
+            }
+            ["tutorial", ..] => {
+                self.push_plain("Usage: tutorial [list | start terminal | hint | leave]");
+                true
+            }
+            _ => false,
         }
     }
 }
@@ -888,9 +992,69 @@ mod tests {
     }
 
     #[test]
+    fn tutorial_and_clear_are_discoverable_and_the_lesson_runs_from_the_ui() {
+        let mut app = App::new();
+        submit_line(&mut app, "help");
+        let help = app
+            .lines
+            .iter()
+            .flat_map(|line| line.spans.iter())
+            .map(|span| span.content.as_ref())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(help.contains("tutorial"));
+        assert!(help.contains("clear"));
+
+        submit_line(&mut app, "tutorial --help");
+        assert!(app.lines.iter().any(|line| {
+            line.spans
+                .iter()
+                .any(|span| span.content.contains("Usage: tutorial"))
+        }));
+
+        submit_line(&mut app, "tutorial start terminal");
+        assert_eq!(app.game.active_shell().active_hostname(), "training-local");
+        submit_line(&mut app, "cat intro.txt");
+        assert!(app.game.lesson_completed());
+        assert!(app.lines.iter().any(|line| {
+            line.spans
+                .iter()
+                .any(|span| span.content.contains("Terminal lesson complete!"))
+        }));
+
+        submit_line(&mut app, "clear");
+        assert!(app.lines.is_empty());
+        assert_eq!(app.scroll_offset, 0);
+        assert_eq!(app.game.active_shell().active_hostname(), "training-local");
+
+        submit_line(&mut app, "tutorial leave");
+        assert_eq!(app.game.active_shell().active_hostname(), "localhost");
+    }
+
+    #[test]
+    fn tab_completes_tutorial_command_and_subcommands() {
+        let mut app = App::new();
+        type_str(&mut app, "tut");
+        app.handle_key(key(KeyCode::Tab));
+        assert_eq!(app.input, "tutorial ");
+
+        app.input.clear();
+        app.cursor = 0;
+        type_str(&mut app, "tutorial st");
+        app.handle_key(key(KeyCode::Tab));
+        assert_eq!(app.input, "tutorial start ");
+
+        type_str(&mut app, "te");
+        app.handle_key(key(KeyCode::Tab));
+        assert_eq!(app.input, "tutorial start terminal ");
+    }
+
+    #[test]
     fn sudo_prompts_after_the_command_without_echoing_or_saving_the_password() {
         let mut app = App::new();
-        app.shell.execute_line("su admin admin123");
+        app.game
+            .active_shell_mut()
+            .execute_line("su admin admin123");
 
         submit_line(&mut app, "sudo whoami");
         assert_eq!(
@@ -926,7 +1090,14 @@ mod tests {
                 .iter()
                 .any(|line| line.spans.iter().any(|span| span.content == "root"))
         );
-        assert_eq!(app.shell.execute_line("whoami").stdout.trim(), "admin");
+        assert_eq!(
+            app.game
+                .active_shell_mut()
+                .execute_line("whoami")
+                .stdout
+                .trim(),
+            "admin"
+        );
         assert!(!app.lines.iter().any(|line| {
             line.spans
                 .iter()
@@ -937,7 +1108,9 @@ mod tests {
     #[test]
     fn sudo_password_prompt_can_be_cancelled_without_running_the_command() {
         let mut app = App::new();
-        app.shell.execute_line("su admin admin123");
+        app.game
+            .active_shell_mut()
+            .execute_line("su admin admin123");
         submit_line(&mut app, "sudo whoami");
         type_str(&mut app, "admin123");
 
@@ -949,13 +1122,22 @@ mod tests {
                 .iter()
                 .any(|line| line.spans.iter().any(|span| span.content == "root"))
         );
-        assert_eq!(app.shell.execute_line("whoami").stdout.trim(), "admin");
+        assert_eq!(
+            app.game
+                .active_shell_mut()
+                .execute_line("whoami")
+                .stdout
+                .trim(),
+            "admin"
+        );
     }
 
     #[test]
     fn cached_sudo_runs_without_another_password_prompt() {
         let mut app = App::new();
-        app.shell.execute_line("su admin admin123");
+        app.game
+            .active_shell_mut()
+            .execute_line("su admin admin123");
 
         submit_line(&mut app, "sudo whoami");
         assert!(app.sudo_prompt().is_some());
@@ -966,7 +1148,14 @@ mod tests {
         submit_line(&mut app, "sudo whoami");
         assert!(app.sudo_prompt().is_none());
         assert!(app.lines.len() > lines_before);
-        assert_eq!(app.shell.execute_line("whoami").stdout.trim(), "admin");
+        assert_eq!(
+            app.game
+                .active_shell_mut()
+                .execute_line("whoami")
+                .stdout
+                .trim(),
+            "admin"
+        );
     }
 
     #[test]
@@ -1263,7 +1452,7 @@ mod tests {
         }
         app.handle_key(key(KeyCode::Enter));
 
-        assert_eq!(app.shell.economy.balance(), 3000);
+        assert_eq!(app.game.active_shell_mut().economy.balance(), 3000);
         assert!(app.lines.iter().any(|l| {
             l.spans
                 .iter()
@@ -1450,7 +1639,8 @@ mod tests {
     #[test]
     fn tab_only_offers_not_yet_installed_packages_for_agpkg_install() {
         let mut app = App::new();
-        app.shell
+        app.game
+            .active_shell_mut()
             .active_device_mut()
             .packages
             .installed
@@ -1469,7 +1659,8 @@ mod tests {
     #[test]
     fn tab_completes_an_installed_package_name_for_agpkg_remove() {
         let mut app = App::new();
-        app.shell
+        app.game
+            .active_shell_mut()
             .active_device_mut()
             .packages
             .installed

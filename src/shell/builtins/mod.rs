@@ -8,6 +8,7 @@ mod network;
 mod privilege;
 mod process;
 mod recon;
+mod ui;
 
 use std::collections::HashMap;
 
@@ -63,6 +64,8 @@ pub fn table() -> HashMap<&'static str, CommandFn> {
     m.insert("help", help);
     m.insert("su", privilege::su);
     m.insert("sudo", privilege::sudo);
+    m.insert("clear", ui::clear);
+    m.insert("tutorial", ui::tutorial);
     m
 }
 
@@ -91,7 +94,7 @@ pub fn help(_shell: &mut Shell, _args: &[String], _stdin: Option<&str>) -> Comma
 /// `Shell::run_command`'s interception). Kept as a flat lookup here, next to
 /// `table()`, rather than baked into each builtin function, so every command
 /// gets the same flag without touching its own logic.
-pub(super) fn help_text(name: &str) -> String {
+pub(crate) fn help_text(name: &str) -> String {
     let text = match name {
         "pwd" => "pwd - print the current working directory\nUsage: pwd\n",
         "cd" => {
@@ -170,6 +173,10 @@ pub(super) fn help_text(name: &str) -> String {
         "su" => "su - switch to another user on the active device\nUsage: su <user> <password>\n",
         "sudo" => {
             "sudo - run one builtin as root\nUsage: sudo <command> [args...]\n\nPrompts for the caller's password without echoing it. The original identity is restored afterward.\n"
+        }
+        "clear" => "clear - clear the terminal scrollback\nUsage: clear\n",
+        "tutorial" => {
+            "tutorial - list, play, and replay guided lessons\nUsage: tutorial [list|start terminal|hint|leave]\n\nThe Terminal lesson teaches navigation and reading files. Run 'tutorial' to see available lessons. Lessons run in an isolated practice world.\n"
         }
         _ => return format!("{name}: no help available\n"),
     };

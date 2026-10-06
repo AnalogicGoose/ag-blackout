@@ -54,13 +54,15 @@ src/
 │   ├── contract.rs            # Contract, ContractStatus, Objective, Lead (Directed/Guided, Slice 2)
 │   ├── board.rs                # ContractBoard — accept/record_download/record_modify (resolution + payout)
 │   ├── knowledge.rs             # Knowledge, DiscoveredCredential — what the player has learned (Slice 2)
-│   └── state.rs                  # Career — the persistent player/progress layer holding Knowledge (Slice 2)
+│   ├── state.rs                  # Career — player knowledge and tutorial progress
+│   └── tutorial.rs               # ordered core lessons, capability unlocks, offers, completion
 ├── shell/
 │   ├── mod.rs
 │   ├── parser.rs            # tokenizer + pipeline/redirection parsing
 │   ├── output.rs             # CommandOutput, LineResult
 │   ├── session.rs             # Shell — session (network/economy/contracts/career/identity), execute_line()
-│   ├── scenario.rs             # tutorial() — the hardcoded Slice 1 + Slice 2 scenario (content, not engine)
+│   ├── scenario.rs             # campaign scenario plus isolated Terminal practice world
+│   ├── lesson.rs               # GameSession — switches between campaign and practice Shells
 │   ├── test_support.rs          # #[cfg(test)] helpers (guest_shell(), root_shell(), ...)
 │   └── builtins/
 │       ├── mod.rs                 # the command table (name -> fn) + help_text() (-h/--help usage strings)
@@ -72,7 +74,8 @@ src/
 │       ├── agpkg.rs                     # agpkg search/install/remove/update/upgrade/list/info
 │       ├── network.rs                    # connect, disconnect, download (completes ObtainResource contracts on success)
 │       ├── contracts.rs                   # contracts, contracts accept <id> (Directed vs. Guided briefings)
-│       └── recon.rs                        # whois, scan, intel (Slice 2)
+│       ├── recon.rs                        # whois, scan, intel (Slice 2)
+│       └── ui.rs                           # registered clear/tutorial command entries; TUI owns their actions
 └── ui/
     ├── mod.rs
     ├── terminal.rs          # TerminalGuard (raw mode + alternate screen, restores on drop/panic)
@@ -118,10 +121,10 @@ AG: Blackout's terminal is a **gameplay interface**, not an attempt at a fully P
 - Resize handling (basic): `run()` re-reads `terminal.size()` and redraws every loop tick (bounded by the 250ms poll timeout), so a resized terminal reflows within that window. There's no dedicated `Event::Resize` handler doing it instantly, but nothing breaks or needs a manual redraw either.
 - `Ctrl+A` / `Ctrl+E` — jump to beginning/end of line (Emacs-style bindings alongside Home/End, which already do this).
 - `Ctrl+U` / `Ctrl+K` — delete from cursor to beginning/end of line (`App::delete_to_line_start`/`delete_to_line_end`).
-- `Ctrl+L` — clears the scrollback (`App::clear_screen`); there's no separate "redraw" step to distinguish since the whole frame repaints from `App` state every tick anyway.
+- `Ctrl+L` and `clear` — clear the scrollback (`App::clear_screen`); there's no separate "redraw" step to distinguish since the whole frame repaints from `App` state every tick anyway. `clear` is registered in the builtin table for `help`, `which`, and command completion; the TUI owns the scrollback and performs the visual action.
 - `~` as shorthand for the home directory in path arguments, expanded in `shell::parser::tokenize` against `env["HOME"]` — only as the first character of a word, followed by `/`/whitespace/end-of-input (so `~someuser` and mid-word `~` are left literal, matching real shells; no per-user home lookup is modeled).
 - `Ctrl+R` — incremental reverse history search (`AppMode::ReverseSearch`), bash-style: typing narrows to the most recent history entry containing the query as a substring, `Ctrl+R` again steps to the next older match, `Enter` runs the matched command immediately, `Esc`/`Ctrl+G` restores the pre-search input line. Any other key exits back to `Normal` keeping whatever's currently shown, rather than also applying that key's own effect — a deliberate simplification, along with pressing `Ctrl+R` a second time on an empty query being a no-op instead of stepping through unfiltered history like real bash.
-- Argument-aware Tab completion for the five commands where it was practical (`App::argument_completion_candidates`): service names for `service`, not-yet-installed catalog names for `agpkg install`, installed package names for `agpkg remove`, available contract ids for `contracts accept`, and pids for `kill`. Determined by a lightweight whitespace scan of the words before the one being completed (`App::preceding_words`), same non-parser approach as the rest of Tab completion — not by command/position generally, so any other command's arguments still fall back to generic path completion.
+- Argument-aware Tab completion (`App::argument_completion_candidates`): service names for `service`, not-yet-installed catalog names for `agpkg install`, installed package names for `agpkg remove`, available contract ids for `contracts accept`, pids for `kill`, and the available `tutorial` subcommands and Terminal lesson ID. Determined by a lightweight whitespace scan of the words before the one being completed (`App::preceding_words`), same non-parser approach as the rest of Tab completion — other arguments still fall back to generic path completion.
 - A distinct cyan prompt color while connected to a remote device (`App::is_connected_remotely`, used in both `render.rs`'s live input line and `App::submit`'s scrollback echo) — on top of the existing hostname/cwd text, so it's harder to miss once earlier `connect` output has scrolled out of view.
 
 **Planned QoL** (not yet built; real candidates for later, not a commitment to build all of them): none currently — see "Explicitly out of scope" below for what's deliberately never planned.
@@ -178,4 +181,4 @@ Seeded by `UserDatabase::new()`:
 
 We are inside Phase 7 — Slices 1–4 work end to end via `cargo run`.
 
-**Next:** Slice 3 and Slice 4 are implemented. Slice 4 stores service observations in `Knowledge` and adds one authored `meridian-edge01` foothold: `exploit` validates the observed and current service version, running state, host-local weakness, and unprivileged service identity before switching the session. Its Guided contract resolves through the ordinary `download` path. See [`GAME_DESIGN.md`](./GAME_DESIGN.md). Detection, a broad vulnerability taxonomy, repository tiering, and a generic exploit/objective engine remain later work.
+**Next:** Slices 3 and 4 are implemented. The onboarding rework has a playable, isolated Terminal lesson; the remaining core lessons, contract gate, progression tutorials, durable save, and in-game DOCS reader are next. The design and boundaries are in [`GAME_DESIGN.md`](./GAME_DESIGN.md). The existing `scenario::tutorial()` still posts ordinary campaign contracts at boot. Detection, a broad vulnerability taxonomy, repository tiering, and a generic exploit/objective engine remain later work.

@@ -18,6 +18,11 @@ struct SudoTicket {
     expires_at: Instant,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum ShellEvent {
+    FileRead { hostname: String, path: VirtualPath },
+}
+
 /// A logged-in shell session. Owns the player's world (`Network`,
 /// `OrganizationRegistry`) and career state (`ContractBoard`, `Economy`,
 /// `Career`) — those persist across `connect`/`disconnect` — plus which
@@ -40,6 +45,7 @@ pub struct Shell {
     local_context: ExecutionContext,
     builtins: HashMap<&'static str, CommandFn>,
     sudo_ticket: Option<SudoTicket>,
+    events: Vec<ShellEvent>,
 }
 
 impl Shell {
@@ -66,6 +72,7 @@ impl Shell {
             local_context,
             builtins: builtins::table(),
             sudo_ticket: None,
+            events: Vec::new(),
         }
     }
 
@@ -306,6 +313,7 @@ impl Shell {
     }
 
     pub fn execute_line(&mut self, input: &str) -> LineResult {
+        self.events.clear();
         let pipeline = match parser::parse(input, &self.context.env) {
             Ok(p) => p,
             Err(e) => {
@@ -441,6 +449,7 @@ impl Shell {
     }
 
     pub fn execute_sudo(&mut self, line: &str, password: &str) -> LineResult {
+        self.events.clear();
         let pipeline = match parser::parse(line, &self.context.env) {
             Ok(pipeline) => pipeline,
             Err(error) => {
@@ -545,6 +554,17 @@ impl Shell {
         });
 
         self.run_as(context, command, stdin)
+    }
+
+    pub(crate) fn record_file_read(&mut self, path: &VirtualPath) {
+        self.events.push(ShellEvent::FileRead {
+            hostname: self.active_hostname.clone(),
+            path: path.clone(),
+        });
+    }
+
+    pub(crate) fn take_events(&mut self) -> Vec<ShellEvent> {
+        std::mem::take(&mut self.events)
     }
 }
 

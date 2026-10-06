@@ -116,6 +116,26 @@ const JOBS: &[Job] = &[
     },
 ];
 
+pub fn terminal_practice() -> Shell {
+    const HOST: &str = "training-local";
+
+    let mut network = Network::new();
+    let mut device = Device::new(HOST);
+    let path = VirtualPath::resolve(&VirtualPath::root(), "/home/guest/intro.txt").unwrap();
+
+    device
+        .filesystem
+        .write_file(
+            &FsAccess::root(),
+            &path,
+            b"Welcome to AG Linux. Explore this device and read this file.\n",
+        )
+        .unwrap();
+
+    network.register(device);
+    Shell::new(network, HOST, 1001)
+}
+
 /// Boots the scenario: the player's own machine, one Directed target device
 /// per `JOBS` entry, the Slice 2 Guided investigation, a privilege chain,
 /// and the Slice 4 service foothold. Every contract is posted as

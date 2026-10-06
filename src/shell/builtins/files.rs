@@ -30,6 +30,7 @@ pub fn cat(shell: &mut Shell, args: &[String], stdin: Option<&str>) -> CommandOu
             Ok(bytes) => {
                 out.push_str(&String::from_utf8_lossy(&bytes));
                 shell.note_credential_leads_at(&path);
+                shell.record_file_read(&path);
             }
             Err(e) => err.push_str(&format!("cat: {arg}: {e}\n")),
         }

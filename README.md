@@ -8,7 +8,7 @@ The game simulates **AG Linux**, a fictional Unix-like operating system develope
 
 The technical foundation is complete: filesystem (`VirtualFS`), users/groups, privilege escalation (`sudo`/`su`/sudoers), a real shell (parser, pipes, redirection, builtins), processes/services (`ps`/`kill`/`service`), and the AGPKG package manager. See [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) for the module layout and phase breakdown.
 
-Gameplay design (contracts, economy, the Device/OS/Network model) is documented in [`docs/GAME_DESIGN.md`](./docs/GAME_DESIGN.md). Slices 1–4 are playable: the contract board includes direct jobs, an investigation chain, a privilege escalation chain, and a service foothold. Run `cargo run` to open the full-screen terminal, then use `help` and `contracts` to explore the available commands and jobs.
+Gameplay design (contracts, economy, the Device/OS/Network model) is documented in [`docs/GAME_DESIGN.md`](./docs/GAME_DESIGN.md). Slices 1–4 are playable: the contract board includes direct jobs, an investigation chain, a privilege escalation chain, and a service foothold. Run `cargo run` to open the full-screen terminal. Use `tutorial` to see the guided Terminal lesson, `tutorial start terminal` to play it, `help` to browse commands, and `clear` to empty the scrollback. The onboarding rework is in progress; contracts are still available without completing lessons.
 
 ## Building
 
