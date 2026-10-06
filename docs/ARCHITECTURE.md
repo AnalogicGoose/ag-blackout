@@ -178,4 +178,4 @@ Seeded by `UserDatabase::new()`:
 
 We are inside Phase 7 — both Slice 1 and Slice 2 work end to end via `cargo run`.
 
-**Next:** Slice 3's interactive sudo prompt, `audit-vault01` privilege chain, and five-minute sudo authentication cache are implemented locally; see [`GAME_DESIGN.md`](./GAME_DESIGN.md). Detection, a vulnerability taxonomy, repository tiering, and a generic exploit/objective engine remain later work.
+**Next:** Slice 3's interactive sudo prompt, `audit-vault01` privilege chain, and five-minute sudo authentication cache are implemented. Slice 4's persistent service observations in `Knowledge` are implemented; next add one authored service foothold and contract, as designed in [`GAME_DESIGN.md`](./GAME_DESIGN.md). Detection, a broad vulnerability taxonomy, repository tiering, and a generic exploit/objective engine remain later work.

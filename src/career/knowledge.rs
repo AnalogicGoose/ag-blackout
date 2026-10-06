@@ -10,6 +10,14 @@ pub struct DiscoveredCredential {
     pub found_on: String,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ServiceObservation {
+    pub hostname: String,
+    pub name: String,
+    pub version: String,
+    pub running: bool,
+}
+
 /// What the player has learned about the world, independent of where
 /// they're currently connected — persists across `connect`/`disconnect`,
 /// unlike `Shell`'s session state. See docs/GAME_DESIGN.md's Slice 2
@@ -19,6 +27,7 @@ pub struct DiscoveredCredential {
 pub struct Knowledge {
     hostnames: BTreeSet<String>,
     organizations: BTreeMap<String, BTreeSet<String>>,
+    services: BTreeMap<(String, String), ServiceObservation>,
     credentials: Vec<DiscoveredCredential>,
 }
 
@@ -59,6 +68,27 @@ impl Knowledge {
         });
     }
 
+    pub fn record_service(
+        &mut self,
+        hostname: impl Into<String>,
+        name: impl Into<String>,
+        version: impl Into<String>,
+        running: bool,
+    ) {
+        let hostname = hostname.into();
+        let name = name.into();
+        self.hostnames.insert(hostname.clone());
+        self.services.insert(
+            (hostname.clone(), name.clone()),
+            ServiceObservation {
+                hostname,
+                name,
+                version: version.into(),
+                running,
+            },
+        );
+    }
+
     pub fn knows_hostname(&self, hostname: &str) -> bool {
         self.hostnames.contains(hostname)
     }
@@ -78,6 +108,10 @@ impl Knowledge {
         self.organizations
             .iter()
             .map(|(name, hosts)| (name.as_str(), hosts))
+    }
+
+    pub fn services(&self) -> impl Iterator<Item = &ServiceObservation> {
+        self.services.values()
     }
 
     pub fn credentials(&self) -> &[DiscoveredCredential] {
@@ -134,5 +168,18 @@ mod tests {
         assert_eq!(cred.username, "analyst");
         assert_eq!(cred.password, "hunter2");
         assert_eq!(cred.found_on, "corp-web01");
+    }
+
+    #[test]
+    fn repeated_service_observation_updates_in_place() {
+        let mut knowledge = Knowledge::new();
+        knowledge.record_service("web01", "nginx", "1.18.0", true);
+        knowledge.record_service("web01", "nginx", "1.24.0", false);
+
+        let observations = knowledge.services().collect::<Vec<_>>();
+        assert_eq!(observations.len(), 1);
+        assert_eq!(observations[0].version, "1.24.0");
+        assert!(!observations[0].running);
+        assert!(knowledge.knows_hostname("web01"));
     }
 }

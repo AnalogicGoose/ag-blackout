@@ -53,20 +53,32 @@ pub fn scan(shell: &mut Shell, args: &[String], _stdin: Option<&str>) -> Command
         .installed
         .is_installed("nmap")
     {
-        let device = shell
-            .network
-            .get(hostname)
-            .expect("just checked reachability");
-        for service in device.services.list() {
-            let state = if service.state == ServiceState::Running {
-                "running"
-            } else {
-                "stopped"
-            };
-            out.push_str(&format!(
-                "  {} {} ({state})\n",
-                service.name, service.version
-            ));
+        let services = {
+            let device = shell
+                .network
+                .get(hostname)
+                .expect("just checked reachability");
+            device
+                .services
+                .list()
+                .into_iter()
+                .map(|service| {
+                    (
+                        service.name.clone(),
+                        service.version.clone(),
+                        service.state == ServiceState::Running,
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+
+        for (name, version, running) in services {
+            let state = if running { "running" } else { "stopped" };
+            out.push_str(&format!("  {name} {version} ({state})\n"));
+            shell
+                .career
+                .knowledge
+                .record_service(hostname.clone(), name, version, running);
         }
     }
 
@@ -95,6 +107,22 @@ pub fn intel(shell: &mut Shell, _args: &[String], _stdin: Option<&str>) -> Comma
             out.push_str(&format!(
                 "  {}/{} (found on {})\n",
                 cred.username, cred.password, cred.found_on
+            ));
+        }
+    }
+
+    let services = knowledge.services().collect::<Vec<_>>();
+    if !services.is_empty() {
+        out.push_str("Observed services:\n");
+        for service in services {
+            let state = if service.running {
+                "running"
+            } else {
+                "stopped"
+            };
+            out.push_str(&format!(
+                "  {}: {} {} ({state})\n",
+                service.hostname, service.name, service.version
             ));
         }
     }
@@ -152,6 +180,7 @@ mod tests {
         assert!(result.stdout.contains("host is up"));
         assert!(!result.stdout.contains("nginx"));
         assert!(shell.career.knowledge.knows_hostname("target01"));
+        assert_eq!(shell.career.knowledge.services().count(), 0);
     }
 
     #[test]
@@ -168,6 +197,41 @@ mod tests {
         assert_eq!(result.exit_code, 0);
         assert!(result.stdout.contains("nginx"));
         assert!(result.stdout.contains("1.18.0"));
+        assert!(
+            shell
+                .execute_line("intel")
+                .stdout
+                .contains("target01: nginx 1.18.0 (running)")
+        );
+
+        let target = shell.network.get_mut("target01").unwrap();
+        target
+            .services
+            .stop(&mut target.processes, true, "nginx")
+            .unwrap();
+        assert!(
+            shell
+                .execute_line("intel")
+                .stdout
+                .contains("target01: nginx 1.18.0 (running)")
+        );
+
+        shell.execute_line("scan target01");
+        assert!(
+            shell
+                .execute_line("intel")
+                .stdout
+                .contains("target01: nginx 1.18.0 (stopped)")
+        );
+        assert_eq!(shell.career.knowledge.services().count(), 3);
+
+        shell.execute_line("connect target01 guest guest");
+        assert!(
+            shell
+                .execute_line("intel")
+                .stdout
+                .contains("target01: nginx 1.18.0 (stopped)")
+        );
     }
 
     #[test]
