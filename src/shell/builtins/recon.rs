@@ -85,6 +85,16 @@ pub fn scan(shell: &mut Shell, args: &[String], _stdin: Option<&str>) -> Command
     CommandOutput::ok(out)
 }
 
+pub fn exploit(shell: &mut Shell, args: &[String], _stdin: Option<&str>) -> CommandOutput {
+    let [hostname, service] = args else {
+        return CommandOutput::error("exploit: usage: exploit <hostname> <service>\n");
+    };
+    match shell.exploit_service(hostname, service) {
+        Ok(()) => CommandOutput::ok(format!("Session opened on {hostname}.\n")),
+        Err(error) => CommandOutput::error(format!("exploit: {error}\n")),
+    }
+}
+
 /// Reviews what `Career::knowledge` has accumulated so far — discovered
 /// hosts, credentials, and service observations.
 pub fn intel(shell: &mut Shell, _args: &[String], _stdin: Option<&str>) -> CommandOutput {

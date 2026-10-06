@@ -16,6 +16,15 @@ pub struct CredentialLead {
     pub password: String,
 }
 
+/// An authored opening on this device, bound to one service version. The
+/// resulting identity must be the service's own unprivileged account.
+#[derive(Clone, Debug)]
+pub struct ServiceWeakness {
+    pub service: String,
+    pub version: String,
+    pub entry_uid: u32,
+}
+
 /// A machine on the network. Right now this directly holds an AG Linux
 /// instance (filesystem/users/processes/services/packages/logs) since AG
 /// Linux is the only implemented OS — see docs/GAME_DESIGN.md. When a second
@@ -31,6 +40,7 @@ pub struct Device {
     pub packages: PackageManager,
     pub logs: LogBook,
     pub credential_leads: Vec<CredentialLead>,
+    pub service_weaknesses: Vec<ServiceWeakness>,
 }
 
 impl Device {
@@ -47,6 +57,7 @@ impl Device {
             packages: PackageManager::new(),
             logs: LogBook::default(),
             credential_leads: Vec::new(),
+            service_weaknesses: Vec::new(),
         }
     }
 }

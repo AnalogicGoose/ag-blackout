@@ -143,6 +143,73 @@ impl Shell {
         Ok(())
     }
 
+    /// Uses an observed, authored service weakness to enter as its process
+    /// owner. The current service state is checked again at attempt time.
+    pub fn exploit_service(&mut self, hostname: &str, service_name: &str) -> Result<(), String> {
+        if hostname == self.local_hostname {
+            return Err("cannot exploit the local device".into());
+        }
+        if !self.network.is_reachable(hostname) {
+            return Err(format!("{hostname}: no route to host"));
+        }
+
+        let observed_version = self
+            .career
+            .knowledge
+            .services()
+            .find(|observation| {
+                observation.hostname == hostname && observation.name == service_name
+            })
+            .map(|observation| observation.version.clone())
+            .ok_or_else(|| format!("no service observation for {service_name} on {hostname}"))?;
+
+        let context = {
+            let device = self
+                .network
+                .get(hostname)
+                .expect("just checked reachability");
+            let service = device
+                .services
+                .get(service_name)
+                .ok_or_else(|| format!("{service_name}: service unavailable"))?;
+            if service.state != crate::system::ServiceState::Running {
+                return Err(format!("{service_name}: service is stopped"));
+            }
+            if service.version != observed_version {
+                return Err(format!(
+                    "{service_name}: observed version is stale; scan again"
+                ));
+            }
+            let weakness = device
+                .service_weaknesses
+                .iter()
+                .find(|weakness| {
+                    weakness.service == service_name && weakness.version == service.version
+                })
+                .ok_or_else(|| format!("{service_name}: no matching weakness"))?;
+            if weakness.entry_uid == 0 || weakness.entry_uid != service.owner_uid {
+                return Err(format!("{service_name}: invalid entry identity"));
+            }
+            device
+                .users
+                .execution_context_for(weakness.entry_uid)
+                .ok_or_else(|| format!("{service_name}: entry account is missing"))?
+        };
+
+        self.network
+            .get_mut(hostname)
+            .expect("just checked reachability")
+            .logs
+            .record(
+                "exploit",
+                format!("{service_name} session opened as uid {}", context.uid),
+            );
+        self.clear_sudo_cache();
+        self.active_hostname = hostname.to_string();
+        self.context = context;
+        Ok(())
+    }
+
     /// `disconnect`'s actual logic. Returns to the local device/identity.
     pub fn disconnect(&mut self) -> Result<(), String> {
         if !self.is_connected_remotely() {
@@ -432,7 +499,10 @@ impl Shell {
             return CommandOutput::error("sudo: usage: sudo <command> [args...]\n");
         };
 
-        if matches!(name.as_str(), "connect" | "disconnect" | "su" | "sudo") {
+        if matches!(
+            name.as_str(),
+            "connect" | "disconnect" | "exploit" | "su" | "sudo"
+        ) {
             return CommandOutput::error(format!("sudo: cannot run {name}\n"));
         }
 

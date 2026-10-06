@@ -1,6 +1,6 @@
 use crate::career::{Contract, Objective};
 use crate::filesystem::{FsAccess, Mode, VirtualPath};
-use crate::world::{CredentialLead, Device, Network, Organization};
+use crate::world::{CredentialLead, Device, Network, Organization, ServiceWeakness};
 
 use super::session::Shell;
 
@@ -37,6 +37,13 @@ const PRIVILEGE_ADMIN_PASSWORD: &str = "R3cover2026!";
 const PRIVILEGE_RESOURCE_PATH: &str = "/root/recovery.key";
 const PRIVILEGE_RESOURCE_CONTENT: &[u8] = b"AG-RECOVERY-KEY-41\n";
 const PRIVILEGE_REWARD: i64 = 9000;
+const FOOTHOLD_HOST: &str = "meridian-edge01";
+const FOOTHOLD_SERVICE: &str = "nginx";
+const FOOTHOLD_VERSION: &str = "1.18.0";
+const FOOTHOLD_UID: u32 = 33;
+const FOOTHOLD_RESOURCE_PATH: &str = "/var/www/ops/backup-token.txt";
+const FOOTHOLD_RESOURCE_CONTENT: &[u8] = b"MERIDIAN-BACKUP-TOKEN-07\n";
+const FOOTHOLD_REWARD: i64 = 11000;
 
 /// What the player has to do to the resource, and what the target starts
 /// out holding at that path.
@@ -110,8 +117,8 @@ const JOBS: &[Job] = &[
 ];
 
 /// Boots the scenario: the player's own machine, one Directed target device
-/// per `JOBS` entry, and the Slice 2 Guided investigation (an `Organization`
-/// plus its two devices). Every contract is posted to the board as
+/// per `JOBS` entry, the Slice 2 Guided investigation, a privilege chain,
+/// and the Slice 4 service foothold. Every contract is posted as
 /// `Available` — the player browses and accepts with `contracts`/`contracts
 /// accept <id>`. Directed jobs work like Slice 1 always did: `connect` with
 /// the handed-over login, then either `download` the resource home
@@ -178,6 +185,7 @@ pub fn tutorial() -> Shell {
 
     setup_guided_investigation(&mut shell);
     setup_privilege_chain(&mut shell);
+    setup_service_foothold(&mut shell);
 
     shell
 }
@@ -186,7 +194,11 @@ fn setup_guided_investigation(shell: &mut Shell) {
     shell.organizations.register(Organization::new(
         GUIDED_ORG_NAME,
         GUIDED_ORG_BLURB,
-        vec![GUIDED_SEED_HOST.to_string(), GUIDED_TARGET_HOST.to_string()],
+        vec![
+            GUIDED_SEED_HOST.to_string(),
+            GUIDED_TARGET_HOST.to_string(),
+            FOOTHOLD_HOST.to_string(),
+        ],
     ));
 
     let mut seed = Device::new(GUIDED_SEED_HOST);
@@ -290,6 +302,59 @@ fn setup_privilege_chain(shell: &mut Shell) {
     ));
 }
 
+fn setup_service_foothold(shell: &mut Shell) {
+    let mut target = Device::new(FOOTHOLD_HOST);
+    let service = target
+        .services
+        .get(FOOTHOLD_SERVICE)
+        .expect("authored service must exist");
+    assert_eq!(service.version, FOOTHOLD_VERSION);
+    assert_eq!(service.owner_uid, FOOTHOLD_UID);
+    target.service_weaknesses.push(ServiceWeakness {
+        service: FOOTHOLD_SERVICE.to_string(),
+        version: FOOTHOLD_VERSION.to_string(),
+        entry_uid: FOOTHOLD_UID,
+    });
+
+    let directory = VirtualPath::resolve(&VirtualPath::root(), "/var/www/ops").unwrap();
+    let resource = VirtualPath::resolve(&VirtualPath::root(), FOOTHOLD_RESOURCE_PATH).unwrap();
+    target
+        .filesystem
+        .mkdir(&FsAccess::root(), &directory)
+        .unwrap();
+    target
+        .filesystem
+        .chown(&FsAccess::root(), &directory, FOOTHOLD_UID, FOOTHOLD_UID)
+        .unwrap();
+    target
+        .filesystem
+        .chmod(&FsAccess::root(), &directory, Mode::new(0o700))
+        .unwrap();
+    target
+        .filesystem
+        .write_file(&FsAccess::root(), &resource, FOOTHOLD_RESOURCE_CONTENT)
+        .unwrap();
+    target
+        .filesystem
+        .chown(&FsAccess::root(), &resource, FOOTHOLD_UID, FOOTHOLD_UID)
+        .unwrap();
+    target
+        .filesystem
+        .chmod(&FsAccess::root(), &resource, Mode::new(0o600))
+        .unwrap();
+
+    shell.network.register(target);
+    shell.contracts.post(Contract::guided(
+        "Retrieve Meridian's web backup token",
+        FOOTHOLD_HOST,
+        resource,
+        FOOTHOLD_REWARD,
+        GUIDED_ORG_NAME,
+        "A legacy web edge still serves operations traffic.",
+        Objective::ObtainResource,
+    ));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -300,10 +365,11 @@ mod tests {
         for job in JOBS {
             assert!(shell.network.is_reachable(job.hostname));
         }
-        assert_eq!(shell.contracts.available().count(), JOBS.len() + 2); // + the Slice 2 Guided contract
+        assert_eq!(shell.contracts.available().count(), JOBS.len() + 3);
         assert_eq!(shell.contracts.active().count(), 0);
         assert_eq!(shell.economy.balance(), 0);
         assert!(shell.network.is_reachable(PRIVILEGE_HOST));
+        assert!(shell.network.is_reachable(FOOTHOLD_HOST));
     }
 
     #[test]
@@ -336,7 +402,7 @@ mod tests {
         shell.execute_line(&format!("download {}", job.resource));
 
         assert_eq!(shell.economy.balance(), 0);
-        assert_eq!(shell.contracts.available().count(), JOBS.len() + 2);
+        assert_eq!(shell.contracts.available().count(), JOBS.len() + 3);
     }
 
     #[test]
@@ -558,5 +624,232 @@ mod tests {
             shell.execute_line("cat /home/guest/recovery.key").stdout,
             "AG-RECOVERY-KEY-41\n"
         );
+    }
+
+    #[test]
+    fn service_foothold_requires_current_observation_and_pays_for_download() {
+        let mut shell = tutorial();
+        assert!(
+            shell
+                .execute_line(&format!("whois {GUIDED_ORG_NAME}"))
+                .stdout
+                .contains(FOOTHOLD_HOST)
+        );
+        let id = shell
+            .contracts
+            .all()
+            .iter()
+            .find(|contract| contract.target_hostname == FOOTHOLD_HOST)
+            .unwrap()
+            .id;
+        assert_eq!(
+            shell
+                .execute_line(&format!("contracts accept {id}"))
+                .exit_code,
+            0
+        );
+
+        assert_ne!(
+            shell
+                .execute_line(&format!("exploit {FOOTHOLD_HOST} {FOOTHOLD_SERVICE}"))
+                .exit_code,
+            0
+        );
+        assert_eq!(
+            shell
+                .execute_line(&format!("connect {FOOTHOLD_HOST} guest guest"))
+                .exit_code,
+            0
+        );
+        assert_ne!(
+            shell
+                .execute_line(&format!("download {FOOTHOLD_RESOURCE_PATH}"))
+                .exit_code,
+            0
+        );
+        assert_eq!(shell.execute_line("disconnect").exit_code, 0);
+        assert_ne!(
+            shell
+                .execute_line(&format!("connect {FOOTHOLD_HOST} www-data whatever"))
+                .exit_code,
+            0
+        );
+
+        assert_eq!(
+            shell
+                .execute_line(&format!("scan {FOOTHOLD_HOST}"))
+                .exit_code,
+            0
+        );
+        assert_ne!(
+            shell
+                .execute_line(&format!("exploit {FOOTHOLD_HOST} {FOOTHOLD_SERVICE}"))
+                .exit_code,
+            0
+        );
+        shell
+            .active_device_mut()
+            .packages
+            .install(true, "nmap")
+            .unwrap();
+        assert_eq!(
+            shell
+                .execute_line(&format!("scan {FOOTHOLD_HOST}"))
+                .exit_code,
+            0
+        );
+        assert!(
+            shell
+                .execute_line("intel")
+                .stdout
+                .contains("meridian-edge01: nginx 1.18.0 (running)")
+        );
+
+        // Matching versions on other hosts do not imply an authored weakness.
+        shell.execute_line("scan meridian-web01");
+        assert_ne!(
+            shell.execute_line("exploit meridian-web01 nginx").exit_code,
+            0
+        );
+        assert_ne!(
+            shell
+                .execute_line(&format!("exploit {FOOTHOLD_HOST} sshd"))
+                .exit_code,
+            0
+        );
+
+        {
+            let target = shell.network.get_mut(FOOTHOLD_HOST).unwrap();
+            target
+                .services
+                .stop(&mut target.processes, true, FOOTHOLD_SERVICE)
+                .unwrap();
+        }
+        assert_ne!(
+            shell
+                .execute_line(&format!("exploit {FOOTHOLD_HOST} {FOOTHOLD_SERVICE}"))
+                .exit_code,
+            0
+        );
+        {
+            let target = shell.network.get_mut(FOOTHOLD_HOST).unwrap();
+            target
+                .services
+                .start(&mut target.processes, true, FOOTHOLD_SERVICE)
+                .unwrap();
+            target
+                .services
+                .set_version(FOOTHOLD_SERVICE, "1.24.0")
+                .unwrap();
+        }
+        assert_ne!(
+            shell
+                .execute_line(&format!("exploit {FOOTHOLD_HOST} {FOOTHOLD_SERVICE}"))
+                .exit_code,
+            0
+        );
+        shell.execute_line(&format!("scan {FOOTHOLD_HOST}"));
+        assert_ne!(
+            shell
+                .execute_line(&format!("exploit {FOOTHOLD_HOST} {FOOTHOLD_SERVICE}"))
+                .exit_code,
+            0
+        );
+        shell
+            .network
+            .get_mut(FOOTHOLD_HOST)
+            .unwrap()
+            .services
+            .set_version(FOOTHOLD_SERVICE, FOOTHOLD_VERSION)
+            .unwrap();
+        shell.execute_line(&format!("scan {FOOTHOLD_HOST}"));
+
+        shell.execute_line("su admin admin123");
+        assert_eq!(shell.execute_sudo("sudo whoami", "admin123").exit_code, 0);
+        assert!(shell.sudo_is_cached());
+        assert_ne!(
+            shell
+                .execute_line(&format!("sudo exploit {FOOTHOLD_HOST} {FOOTHOLD_SERVICE}"))
+                .exit_code,
+            0
+        );
+        assert_eq!(shell.active_hostname(), PLAYER_HOST);
+
+        assert_eq!(
+            shell
+                .execute_line(&format!("exploit {FOOTHOLD_HOST} {FOOTHOLD_SERVICE}"))
+                .exit_code,
+            0
+        );
+        assert!(!shell.sudo_is_cached());
+        assert_eq!(shell.execute_line("whoami").stdout.trim(), "www-data");
+        assert_ne!(shell.execute_line("ls /root").exit_code, 0);
+        assert!(
+            shell
+                .execute_line("logs")
+                .stdout
+                .contains("nginx session opened as uid 33")
+        );
+        assert_eq!(
+            shell
+                .execute_line(&format!("download {FOOTHOLD_RESOURCE_PATH}"))
+                .exit_code,
+            0
+        );
+        assert_eq!(shell.economy.balance(), FOOTHOLD_REWARD);
+        assert_eq!(
+            shell
+                .execute_line(&format!("download {FOOTHOLD_RESOURCE_PATH}"))
+                .exit_code,
+            0
+        );
+        assert_eq!(shell.economy.balance(), FOOTHOLD_REWARD);
+        assert_eq!(shell.execute_line("disconnect").exit_code, 0);
+        assert_eq!(shell.execute_line("whoami").stdout.trim(), "guest");
+        assert_eq!(
+            shell
+                .execute_line("cat /home/guest/backup-token.txt")
+                .stdout,
+            "MERIDIAN-BACKUP-TOKEN-07\n"
+        );
+    }
+
+    #[test]
+    fn malformed_service_weakness_cannot_grant_another_identity() {
+        let mut shell = tutorial();
+        shell
+            .active_device_mut()
+            .packages
+            .install(true, "nmap")
+            .unwrap();
+        shell.execute_line(&format!("scan {FOOTHOLD_HOST}"));
+
+        shell
+            .network
+            .get_mut(FOOTHOLD_HOST)
+            .unwrap()
+            .service_weaknesses[0]
+            .entry_uid = 0;
+        assert_ne!(
+            shell
+                .execute_line(&format!("exploit {FOOTHOLD_HOST} nginx"))
+                .exit_code,
+            0
+        );
+        assert_eq!(shell.active_hostname(), PLAYER_HOST);
+
+        shell
+            .network
+            .get_mut(FOOTHOLD_HOST)
+            .unwrap()
+            .service_weaknesses[0]
+            .entry_uid = 1000;
+        assert_ne!(
+            shell
+                .execute_line(&format!("exploit {FOOTHOLD_HOST} nginx"))
+                .exit_code,
+            0
+        );
+        assert_eq!(shell.execute_line("whoami").stdout.trim(), "guest");
     }
 }

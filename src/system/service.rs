@@ -86,6 +86,21 @@ impl ServiceRegistry {
         self.services.values().collect()
     }
 
+    /// Changes the installed service version in world state. This is an
+    /// internal simulation hook; no player command patches services yet.
+    pub fn set_version(
+        &mut self,
+        name: &str,
+        version: impl Into<String>,
+    ) -> Result<(), ServiceError> {
+        let service = self
+            .services
+            .get_mut(name)
+            .ok_or_else(|| ServiceError::NotFound(name.to_string()))?;
+        service.version = version.into();
+        Ok(())
+    }
+
     pub fn stop(
         &mut self,
         processes: &mut ProcessTable,

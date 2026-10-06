@@ -33,9 +33,9 @@ pub enum Lead {
     /// Hostname and login handed to the player directly — Slice 1's shape.
     Directed { username: String, password: String },
     /// Only an `Organization` name and a hint are handed over; the player
-    /// has to discover the actual device (and a working credential for it)
-    /// through investigation (`whois`/`scan`) and gameplay (reading files,
-    /// reusing a harvested password) before `connect` can ever reach it.
+    /// has to discover the actual device and a way in through investigation
+    /// (`whois`/`scan`) and gameplay (for example, credential reuse or a
+    /// service foothold).
     Guided { organization: String, hint: String },
 }
 

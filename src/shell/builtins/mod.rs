@@ -58,6 +58,7 @@ pub fn table() -> HashMap<&'static str, CommandFn> {
     m.insert("contracts", contracts::contracts);
     m.insert("whois", recon::whois);
     m.insert("scan", recon::scan);
+    m.insert("exploit", recon::exploit);
     m.insert("intel", recon::intel);
     m.insert("help", help);
     m.insert("su", privilege::su);
@@ -155,7 +156,10 @@ pub(super) fn help_text(name: &str) -> String {
             "whois - look up public information about an organization\nUsage: whois <organization name>\n\nArguments are joined with a space, so a multi-word name needs no quoting. Free and always available.\n"
         }
         "scan" => {
-            "scan - probe a device on the network\nUsage: scan <hostname>\n\nAlways reports reachability. Also lists services and versions once nmap is installed on the device you're currently at.\n"
+            "scan - probe a device on the network\nUsage: scan <hostname>\n\nAlways reports reachability. With nmap installed on the current device, also lists services and versions and saves those observations for intel.\n"
+        }
+        "exploit" => {
+            "exploit - attempt a known service foothold\nUsage: exploit <hostname> <service>\n\nRequires a matching service observation and a currently running, vulnerable service. A successful attempt opens a session as the service account.\n"
         }
         "intel" => {
             "intel - review what you've discovered so far\nUsage: intel\n\nLists known hosts, credentials, and observed services recorded during play.\n"

@@ -292,7 +292,8 @@ impl App {
     /// Command/argument-specific candidates for the word under the cursor,
     /// or `None` to fall back to generic path completion. Covers the
     /// arguments whose real values are cheap to enumerate and worth
-    /// completing: service names, AGPKG package names, contract ids, pids.
+    /// completing: service names, observed hosts, AGPKG package names,
+    /// contract ids, and pids.
     fn argument_completion_candidates(
         &self,
         preceding: &[&str],
@@ -300,6 +301,21 @@ impl App {
     ) -> Option<Vec<String>> {
         let candidates = match preceding {
             ["service"] => self.active_service_names(),
+            ["exploit"] => self
+                .shell
+                .career
+                .knowledge
+                .hostnames()
+                .map(str::to_string)
+                .collect(),
+            ["exploit", hostname] => self
+                .shell
+                .career
+                .knowledge
+                .services()
+                .filter(|observation| observation.hostname == *hostname)
+                .map(|observation| observation.name.clone())
+                .collect(),
             ["agpkg", "install"] => self.installable_package_names(),
             ["agpkg", "remove"] => self.installed_package_names(),
             ["contracts", "accept"] => self.available_contract_ids(),
