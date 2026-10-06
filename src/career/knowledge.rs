@@ -22,7 +22,8 @@ pub struct ServiceObservation {
 /// they're currently connected — persists across `connect`/`disconnect`,
 /// unlike `Shell`'s session state. See docs/GAME_DESIGN.md's Slice 2
 /// section: `whois`/`scan` record hostnames and organization affiliations;
-/// reading an authored credential-bearing file records a credential.
+/// an nmap-enhanced `scan` also records service observations. Reading an
+/// authored credential-bearing file records a credential.
 #[derive(Default)]
 pub struct Knowledge {
     hostnames: BTreeSet<String>,

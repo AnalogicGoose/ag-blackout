@@ -86,7 +86,7 @@ pub fn scan(shell: &mut Shell, args: &[String], _stdin: Option<&str>) -> Command
 }
 
 /// Reviews what `Career::knowledge` has accumulated so far — discovered
-/// hosts and credentials. See docs/GAME_DESIGN.md's Slice 2 section.
+/// hosts, credentials, and service observations.
 pub fn intel(shell: &mut Shell, _args: &[String], _stdin: Option<&str>) -> CommandOutput {
     let knowledge = &shell.career.knowledge;
     let mut out = String::new();

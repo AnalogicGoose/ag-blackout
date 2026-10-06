@@ -158,7 +158,7 @@ pub(super) fn help_text(name: &str) -> String {
             "scan - probe a device on the network\nUsage: scan <hostname>\n\nAlways reports reachability. Also lists services and versions once nmap is installed on the device you're currently at.\n"
         }
         "intel" => {
-            "intel - review what you've discovered so far\nUsage: intel\n\nLists known hosts and credentials recorded during play.\n"
+            "intel - review what you've discovered so far\nUsage: intel\n\nLists known hosts, credentials, and observed services recorded during play.\n"
         }
         "help" => {
             "help - list every available command\nUsage: help\n\nRun '<command> --help' or '<command> -h' for a command's full usage.\n"
