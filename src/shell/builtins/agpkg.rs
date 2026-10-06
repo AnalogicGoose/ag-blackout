@@ -3,7 +3,9 @@ use super::super::session::Shell;
 
 pub fn agpkg(shell: &mut Shell, args: &[String], _stdin: Option<&str>) -> CommandOutput {
     let Some(subcommand) = args.first() else {
-        return CommandOutput::error("agpkg: missing subcommand (search/install/remove/update/upgrade/list/info)\n");
+        return CommandOutput::error(
+            "agpkg: missing subcommand (search/install/remove/update/upgrade/list/info)\n",
+        );
     };
     let rest = &args[1..];
     let is_root = shell.context.is_root();
@@ -34,7 +36,11 @@ pub fn agpkg(shell: &mut Shell, args: &[String], _stdin: Option<&str>) -> Comman
                     p.name,
                     p.version,
                     p.description,
-                    if p.dependencies.is_empty() { "none".to_string() } else { p.dependencies.join(", ") }
+                    if p.dependencies.is_empty() {
+                        "none".to_string()
+                    } else {
+                        p.dependencies.join(", ")
+                    }
                 )),
                 None => CommandOutput::error(format!("agpkg info: package '{name}' not found\n")),
             }
@@ -44,7 +50,14 @@ pub fn agpkg(shell: &mut Shell, args: &[String], _stdin: Option<&str>) -> Comman
             installed.sort_by(|a, b| a.name.cmp(&b.name));
             let out = installed
                 .iter()
-                .map(|p| format!("{}/{}{}", p.name, p.version, if p.explicit { "" } else { " [auto]" }))
+                .map(|p| {
+                    format!(
+                        "{}/{}{}",
+                        p.name,
+                        p.version,
+                        if p.explicit { "" } else { " [auto]" }
+                    )
+                })
                 .collect::<Vec<_>>()
                 .join("\n");
             CommandOutput::ok(if out.is_empty() { out } else { out + "\n" })
@@ -56,7 +69,10 @@ pub fn agpkg(shell: &mut Shell, args: &[String], _stdin: Option<&str>) -> Comman
             let device = shell.active_device_mut();
             match device.packages.install(is_root, name) {
                 Ok(installed) => {
-                    device.logs.record("agpkg", format!("installed {} (uid {uid})", installed.join(", ")));
+                    device.logs.record(
+                        "agpkg",
+                        format!("installed {} (uid {uid})", installed.join(", ")),
+                    );
                     CommandOutput::ok(format!("Installing: {}\n", installed.join(", ")))
                 }
                 Err(e) => CommandOutput::error(format!("agpkg install: {e}\n")),
@@ -69,7 +85,9 @@ pub fn agpkg(shell: &mut Shell, args: &[String], _stdin: Option<&str>) -> Comman
             let device = shell.active_device_mut();
             match device.packages.remove(is_root, name) {
                 Ok(()) => {
-                    device.logs.record("agpkg", format!("removed {name} (uid {uid})"));
+                    device
+                        .logs
+                        .record("agpkg", format!("removed {name} (uid {uid})"));
                     CommandOutput::empty_ok()
                 }
                 Err(e) => CommandOutput::error(format!("agpkg remove: {e}\n")),
@@ -82,9 +100,14 @@ pub fn agpkg(shell: &mut Shell, args: &[String], _stdin: Option<&str>) -> Comman
         "upgrade" => {
             let device = shell.active_device_mut();
             match device.packages.upgrade(is_root) {
-                Ok(upgraded) if upgraded.is_empty() => CommandOutput::ok("0 upgraded, 0 newly installed\n"),
+                Ok(upgraded) if upgraded.is_empty() => {
+                    CommandOutput::ok("0 upgraded, 0 newly installed\n")
+                }
                 Ok(upgraded) => {
-                    device.logs.record("agpkg", format!("upgraded {} (uid {uid})", upgraded.join(", ")));
+                    device.logs.record(
+                        "agpkg",
+                        format!("upgraded {} (uid {uid})", upgraded.join(", ")),
+                    );
                     CommandOutput::ok(format!("Upgraded: {}\n", upgraded.join(", ")))
                 }
                 Err(e) => CommandOutput::error(format!("agpkg upgrade: {e}\n")),
@@ -147,7 +170,13 @@ mod tests {
         assert_eq!(shell.execute_line("agpkg update").exit_code, 1);
         assert_eq!(shell.execute_line("agpkg upgrade").exit_code, 1);
         shell.context.uid = 0;
-        assert_eq!(shell.execute_line("agpkg update").stdout, "Reading package lists... Done\n");
-        assert_eq!(shell.execute_line("agpkg upgrade").stdout, "0 upgraded, 0 newly installed\n");
+        assert_eq!(
+            shell.execute_line("agpkg update").stdout,
+            "Reading package lists... Done\n"
+        );
+        assert_eq!(
+            shell.execute_line("agpkg upgrade").stdout,
+            "0 upgraded, 0 newly installed\n"
+        );
     }
 }

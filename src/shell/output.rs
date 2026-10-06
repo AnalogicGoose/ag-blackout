@@ -7,7 +7,11 @@ pub struct CommandOutput {
 
 impl CommandOutput {
     pub fn ok(stdout: impl Into<String>) -> Self {
-        CommandOutput { stdout: stdout.into(), stderr: String::new(), exit_code: 0 }
+        CommandOutput {
+            stdout: stdout.into(),
+            stderr: String::new(),
+            exit_code: 0,
+        }
     }
 
     pub fn empty_ok() -> Self {
@@ -15,7 +19,11 @@ impl CommandOutput {
     }
 
     pub fn error(stderr: impl Into<String>) -> Self {
-        CommandOutput { stdout: String::new(), stderr: stderr.into(), exit_code: 1 }
+        CommandOutput {
+            stdout: String::new(),
+            stderr: stderr.into(),
+            exit_code: 1,
+        }
     }
 }
 

@@ -1,8 +1,8 @@
+use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout};
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Wrap};
-use ratatui::Frame;
 
 use super::app::{App, AppMode};
 
@@ -27,12 +27,18 @@ pub fn draw(frame: &mut Frame, app: &App) {
     let prompt = sudo_prompt.clone().unwrap_or_else(|| app.prompt_string());
     let input_line = if sudo_prompt.is_some() {
         // The password stays in App's private buffer and is never drawn.
-        Line::from(Span::styled(prompt.clone(), Style::default().fg(Color::Yellow)))
+        Line::from(Span::styled(
+            prompt.clone(),
+            Style::default().fg(Color::Yellow),
+        ))
     } else if app.mode == AppMode::ReverseSearch {
         // Bash-style: the normal prompt is replaced by the search prompt
         // while searching, showing whichever history entry currently matches.
         Line::from(vec![
-            Span::styled(format!("(reverse-i-search)`{}': ", app.search_query()), Style::default().fg(Color::Yellow)),
+            Span::styled(
+                format!("(reverse-i-search)`{}': ", app.search_query()),
+                Style::default().fg(Color::Yellow),
+            ),
             Span::raw(app.input.clone()),
         ])
     } else {
@@ -40,7 +46,11 @@ pub fn draw(frame: &mut Frame, app: &App) {
         // hostname/cwd text already says so (App::prompt_string), but a
         // color cue makes it impossible to miss mid-scrollback, especially
         // once output has scrolled the earlier `connect` line out of view.
-        let prompt_color = if app.is_connected_remotely() { Color::Cyan } else { Color::Green };
+        let prompt_color = if app.is_connected_remotely() {
+            Color::Cyan
+        } else {
+            Color::Green
+        };
         let mut input_spans = vec![
             Span::styled(prompt.clone(), Style::default().fg(prompt_color)),
             Span::raw(app.input.clone()),
@@ -49,7 +59,10 @@ pub fn draw(frame: &mut Frame, app: &App) {
             // Fish-style: the remainder of a matching history entry, dimmed,
             // shown right after the cursor. Never part of the real input until
             // accepted (Right arrow at end of line — see App::accept_suggestion).
-            input_spans.push(Span::styled(suggestion, Style::default().fg(Color::DarkGray)));
+            input_spans.push(Span::styled(
+                suggestion,
+                Style::default().fg(Color::DarkGray),
+            ));
         }
         Line::from(input_spans)
     };
@@ -64,7 +77,9 @@ pub fn draw(frame: &mut Frame, app: &App) {
     // "follow the latest output," matching how a real terminal behaves.
     let scroll_from_top = max_scroll_from_top.saturating_sub(app.scroll_offset);
 
-    let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false }).scroll((scroll_from_top, 0));
+    let paragraph = Paragraph::new(lines)
+        .wrap(Wrap { trim: false })
+        .scroll((scroll_from_top, 0));
     frame.render_widget(paragraph, area);
 
     if let Some(status_area) = status_area {
@@ -77,7 +92,9 @@ pub fn draw(frame: &mut Frame, app: &App) {
                 "-- REVERSE SEARCH -- type to narrow, Ctrl+R for an older match, Enter to run, Esc to cancel",
                 Style::default().fg(Color::Black).bg(Color::Yellow),
             )),
-            AppMode::Normal => unreachable!("status_area is only Some in Scroll or ReverseSearch mode"),
+            AppMode::Normal => {
+                unreachable!("status_area is only Some in Scroll or ReverseSearch mode")
+            }
         };
         frame.render_widget(Paragraph::new(status_line), status_area);
     }

@@ -22,7 +22,11 @@ pub fn cat(shell: &mut Shell, args: &[String], stdin: Option<&str>) -> CommandOu
             }
         };
         let access = shell.context.fs_access();
-        match shell.active_device_mut().filesystem.read_file(&access, &path) {
+        match shell
+            .active_device_mut()
+            .filesystem
+            .read_file(&access, &path)
+        {
             Ok(bytes) => {
                 out.push_str(&String::from_utf8_lossy(&bytes));
                 shell.note_credential_leads_at(&path);
@@ -31,11 +35,17 @@ pub fn cat(shell: &mut Shell, args: &[String], stdin: Option<&str>) -> CommandOu
         }
     }
 
-    CommandOutput { stdout: out, stderr: err.clone(), exit_code: if err.is_empty() { 0 } else { 1 } }
+    CommandOutput {
+        stdout: out,
+        stderr: err.clone(),
+        exit_code: if err.is_empty() { 0 } else { 1 },
+    }
 }
 
 pub fn touch(shell: &mut Shell, args: &[String], _stdin: Option<&str>) -> CommandOutput {
-    run_for_each_path(shell, args, "touch", |fs, access, path| fs.touch(access, path))
+    run_for_each_path(shell, args, "touch", |fs, access, path| {
+        fs.touch(access, path)
+    })
 }
 
 pub fn mkdir(shell: &mut Shell, args: &[String], _stdin: Option<&str>) -> CommandOutput {
@@ -66,7 +76,11 @@ pub fn mkdir(shell: &mut Shell, args: &[String], _stdin: Option<&str>) -> Comman
     if err.is_empty() {
         CommandOutput::empty_ok()
     } else {
-        CommandOutput { stdout: String::new(), stderr: err, exit_code: 1 }
+        CommandOutput {
+            stdout: String::new(),
+            stderr: err,
+            exit_code: 1,
+        }
     }
 }
 
@@ -105,8 +119,15 @@ pub fn rm(shell: &mut Shell, args: &[String], _stdin: Option<&str>) -> CommandOu
             }
         };
         let access = shell.context.fs_access();
-        let result = match shell.active_device_mut().filesystem.remove_file(&access, &path) {
-            Err(FsError::IsADirectory(_)) if recursive => shell.active_device_mut().filesystem.remove_dir(&access, &path, true),
+        let result = match shell
+            .active_device_mut()
+            .filesystem
+            .remove_file(&access, &path)
+        {
+            Err(FsError::IsADirectory(_)) if recursive => shell
+                .active_device_mut()
+                .filesystem
+                .remove_dir(&access, &path, true),
             other => other,
         };
         if let Err(e) = result {
@@ -116,16 +137,24 @@ pub fn rm(shell: &mut Shell, args: &[String], _stdin: Option<&str>) -> CommandOu
     if err.is_empty() {
         CommandOutput::empty_ok()
     } else {
-        CommandOutput { stdout: String::new(), stderr: err, exit_code: 1 }
+        CommandOutput {
+            stdout: String::new(),
+            stderr: err,
+            exit_code: 1,
+        }
     }
 }
 
 pub fn cp(shell: &mut Shell, args: &[String], _stdin: Option<&str>) -> CommandOutput {
-    two_path_op(shell, args, "cp", |fs, access, from, to| fs.copy_file(access, from, to))
+    two_path_op(shell, args, "cp", |fs, access, from, to| {
+        fs.copy_file(access, from, to)
+    })
 }
 
 pub fn mv(shell: &mut Shell, args: &[String], _stdin: Option<&str>) -> CommandOutput {
-    two_path_op(shell, args, "mv", |fs, access, from, to| fs.rename(access, from, to))
+    two_path_op(shell, args, "mv", |fs, access, from, to| {
+        fs.rename(access, from, to)
+    })
 }
 
 fn run_for_each_path(
@@ -154,7 +183,11 @@ fn run_for_each_path(
     if err.is_empty() {
         CommandOutput::empty_ok()
     } else {
-        CommandOutput { stdout: String::new(), stderr: err, exit_code: 1 }
+        CommandOutput {
+            stdout: String::new(),
+            stderr: err,
+            exit_code: 1,
+        }
     }
 }
 
@@ -176,7 +209,12 @@ fn two_path_op(
         Err(e) => return CommandOutput::error(format!("{cmd_name}: {e}\n")),
     };
     let access = shell.context.fs_access();
-    match op(&mut shell.active_device_mut().filesystem, &access, &from, &to) {
+    match op(
+        &mut shell.active_device_mut().filesystem,
+        &access,
+        &from,
+        &to,
+    ) {
         Ok(()) => CommandOutput::empty_ok(),
         Err(e) => CommandOutput::error(format!("{cmd_name}: {e}\n")),
     }
@@ -233,7 +271,10 @@ mod tests {
         let mut shell = guest_shell();
         shell.execute_line("echo payload > /home/guest/src.txt");
         shell.execute_line("cp /home/guest/src.txt /home/guest/dst.txt");
-        assert_eq!(shell.execute_line("cat /home/guest/dst.txt").stdout, "payload\n");
+        assert_eq!(
+            shell.execute_line("cat /home/guest/dst.txt").stdout,
+            "payload\n"
+        );
     }
 
     #[test]
@@ -259,10 +300,21 @@ mod tests {
         let mut target = Device::new("target01");
         let access = FsAccess::root();
         let path = VirtualPath::resolve(&VirtualPath::root(), "/home/guest/report.pdf").unwrap();
-        target.filesystem.write_file(&access, &path, b"confidential").unwrap();
+        target
+            .filesystem
+            .write_file(&access, &path, b"confidential")
+            .unwrap();
         shell.network.register(target);
 
-        let id = shell.contracts.post(Contract::directed("Get the report", "target01", path.clone(), 3000, "guest", "guest", crate::career::Objective::ObtainResource));
+        let id = shell.contracts.post(Contract::directed(
+            "Get the report",
+            "target01",
+            path.clone(),
+            3000,
+            "guest",
+            "guest",
+            crate::career::Objective::ObtainResource,
+        ));
         shell.execute_line(&format!("contracts accept {id}"));
 
         shell.execute_line("connect target01 guest guest");

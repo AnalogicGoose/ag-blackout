@@ -27,9 +27,17 @@ impl ExecutionContext {
         env.insert("HOME".to_string(), user.home.to_string());
         env.insert("USER".to_string(), user.username.clone());
         env.insert("SHELL".to_string(), user.shell.clone());
-        env.insert("PATH".to_string(), "/usr/local/bin:/usr/bin:/bin".to_string());
+        env.insert(
+            "PATH".to_string(),
+            "/usr/local/bin:/usr/bin:/bin".to_string(),
+        );
 
-        ExecutionContext { uid: user.uid, gids, cwd: user.home.clone(), env }
+        ExecutionContext {
+            uid: user.uid,
+            gids,
+            cwd: user.home.clone(),
+            env,
+        }
     }
 
     pub fn fs_access(&self) -> FsAccess {

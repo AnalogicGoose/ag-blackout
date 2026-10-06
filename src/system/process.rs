@@ -29,9 +29,20 @@ pub struct ProcessTable {
 
 impl ProcessTable {
     pub fn new() -> Self {
-        let mut table = ProcessTable { processes: BTreeMap::new(), next_pid: 1 };
+        let mut table = ProcessTable {
+            processes: BTreeMap::new(),
+            next_pid: 1,
+        };
         let init_pid = table.next_pid();
-        table.processes.insert(init_pid, Process{ pid: init_pid, ppid: 0, uid: 0, command: "ag-init".to_string() });
+        table.processes.insert(
+            init_pid,
+            Process {
+                pid: init_pid,
+                ppid: 0,
+                uid: 0,
+                command: "ag-init".to_string(),
+            },
+        );
         table
     }
 
@@ -43,7 +54,15 @@ impl ProcessTable {
 
     pub fn spawn(&mut self, ppid: u32, uid: u32, command: impl Into<String>) -> u32 {
         let pid = self.next_pid();
-        self.processes.insert(pid, Process { pid, ppid, uid, command: command.into() });
+        self.processes.insert(
+            pid,
+            Process {
+                pid,
+                ppid,
+                uid,
+                command: command.into(),
+            },
+        );
         pid
     }
 
@@ -104,13 +123,19 @@ mod tests {
     #[test]
     fn cannot_kill_init() {
         let mut table = ProcessTable::new();
-        assert_eq!(table.kill(0, true, 1).unwrap_err(), ProcessError::CannotKillInit);
+        assert_eq!(
+            table.kill(0, true, 1).unwrap_err(),
+            ProcessError::CannotKillInit
+        );
     }
 
     #[test]
     fn kill_unknown_pid_fails() {
         let mut table = ProcessTable::new();
-        assert_eq!(table.kill(0, true, 999).unwrap_err(), ProcessError::NotFound(999));
+        assert_eq!(
+            table.kill(0, true, 999).unwrap_err(),
+            ProcessError::NotFound(999)
+        );
     }
 
     #[test]
@@ -125,7 +150,10 @@ mod tests {
     fn non_owner_cannot_kill_unless_root() {
         let mut table = ProcessTable::new();
         let pid = table.spawn(1, 0, "sshd");
-        assert_eq!(table.kill(1001, false, pid).unwrap_err(), ProcessError::NotPermitted);
+        assert_eq!(
+            table.kill(1001, false, pid).unwrap_err(),
+            ProcessError::NotPermitted
+        );
         assert!(table.kill(0, true, pid).is_ok());
     }
 }

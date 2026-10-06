@@ -8,7 +8,11 @@ pub fn echo(_shell: &mut Shell, args: &[String], _stdin: Option<&str>) -> Comman
 pub fn env(shell: &mut Shell, _args: &[String], _stdin: Option<&str>) -> CommandOutput {
     let mut pairs: Vec<_> = shell.context.env.iter().collect();
     pairs.sort_by(|a, b| a.0.cmp(b.0));
-    let out = pairs.into_iter().map(|(k, v)| format!("{k}={v}")).collect::<Vec<_>>().join("\n");
+    let out = pairs
+        .into_iter()
+        .map(|(k, v)| format!("{k}={v}"))
+        .collect::<Vec<_>>()
+        .join("\n");
     CommandOutput::ok(if out.is_empty() { out } else { out + "\n" })
 }
 
@@ -25,7 +29,11 @@ pub fn export(shell: &mut Shell, args: &[String], _stdin: Option<&str>) -> Comma
     if err.is_empty() {
         CommandOutput::empty_ok()
     } else {
-        CommandOutput { stdout: String::new(), stderr: err, exit_code: 1 }
+        CommandOutput {
+            stdout: String::new(),
+            stderr: err,
+            exit_code: 1,
+        }
     }
 }
 
@@ -37,7 +45,11 @@ pub fn which(shell: &mut Shell, args: &[String], _stdin: Option<&str>) -> Comman
         CommandOutput::ok(format!("/bin/{name}\n"))
     } else {
         let path = shell.context.env.get("PATH").cloned().unwrap_or_default();
-        CommandOutput { stdout: String::new(), stderr: format!("which: no {name} in ({path})\n"), exit_code: 1 }
+        CommandOutput {
+            stdout: String::new(),
+            stderr: format!("which: no {name} in ({path})\n"),
+            exit_code: 1,
+        }
     }
 }
 
@@ -47,12 +59,18 @@ mod tests {
 
     #[test]
     fn echo_joins_arguments_with_spaces() {
-        assert_eq!(guest_shell().execute_line("echo hello world").stdout, "hello world\n");
+        assert_eq!(
+            guest_shell().execute_line("echo hello world").stdout,
+            "hello world\n"
+        );
     }
 
     #[test]
     fn env_var_expansion_flows_through_echo() {
-        assert_eq!(guest_shell().execute_line("echo $HOME").stdout, "/home/guest\n");
+        assert_eq!(
+            guest_shell().execute_line("echo $HOME").stdout,
+            "/home/guest\n"
+        );
     }
 
     #[test]

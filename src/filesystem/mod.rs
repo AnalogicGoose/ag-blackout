@@ -1,8 +1,8 @@
 pub mod error;
-pub mod path;
-pub mod permissions;
 pub mod metadata;
 pub mod node;
+pub mod path;
+pub mod permissions;
 pub mod vfs;
 
 pub use error::FsError;

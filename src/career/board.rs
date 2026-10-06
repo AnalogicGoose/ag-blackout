@@ -2,7 +2,7 @@ use thiserror::Error;
 
 use crate::filesystem::VirtualPath;
 
-use super::contract::{ Contract, ContractStatus, Objective };
+use super::contract::{Contract, ContractStatus, Objective};
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum ContractError {
@@ -24,7 +24,10 @@ pub struct ContractBoard {
 
 impl ContractBoard {
     pub fn new() -> Self {
-        ContractBoard { contracts: Vec::new(), next_id: 1 }
+        ContractBoard {
+            contracts: Vec::new(),
+            next_id: 1,
+        }
     }
 
     /// Adds a contract to the board as `Available`, assigning it an id.
@@ -39,7 +42,11 @@ impl ContractBoard {
     }
 
     pub fn accept(&mut self, id: u32) -> Result<(), ContractError> {
-        let contract = self.contracts.iter_mut().find(|c| c.id == id).ok_or(ContractError::NotFound(id))?;
+        let contract = self
+            .contracts
+            .iter_mut()
+            .find(|c| c.id == id)
+            .ok_or(ContractError::NotFound(id))?;
         if contract.status != ContractStatus::Available {
             return Err(ContractError::NotAvailable(id));
         }
@@ -48,15 +55,21 @@ impl ContractBoard {
     }
 
     pub fn available(&self) -> impl Iterator<Item = &Contract> {
-        self.contracts.iter().filter(|c| c.status == ContractStatus::Available)
+        self.contracts
+            .iter()
+            .filter(|c| c.status == ContractStatus::Available)
     }
 
     pub fn active(&self) -> impl Iterator<Item = &Contract> {
-        self.contracts.iter().filter(|c| c.status == ContractStatus::Active)
+        self.contracts
+            .iter()
+            .filter(|c| c.status == ContractStatus::Active)
     }
 
     pub fn completed(&self) -> impl Iterator<Item = &Contract> {
-        self.contracts.iter().filter(|c| c.status == ContractStatus::Completed)
+        self.contracts
+            .iter()
+            .filter(|c| c.status == ContractStatus::Completed)
     }
 
     pub fn all(&self) -> &[Contract] {
@@ -83,10 +96,18 @@ impl ContractBoard {
 
     /// Marks any *active* `ModifyResource` contract targeting `(hostname,
     /// path)` as completed if `new_content` now matches what it requires.
-    pub fn record_modify(&mut self, hostname: &str, path: &VirtualPath, new_content: &[u8]) -> Vec<Contract> {
+    pub fn record_modify(
+        &mut self,
+        hostname: &str,
+        path: &VirtualPath,
+        new_content: &[u8],
+    ) -> Vec<Contract> {
         let mut completed = Vec::new();
         for contract in self.contracts.iter_mut() {
-            if contract.status != ContractStatus::Active || contract.target_hostname != hostname || &contract.resource_path != path {
+            if contract.status != ContractStatus::Active
+                || contract.target_hostname != hostname
+                || &contract.resource_path != path
+            {
                 continue;
             }
             if let Objective::ModifyResource { required_content } = &contract.objective {
@@ -109,7 +130,15 @@ mod tests {
     }
 
     fn sample() -> Contract {
-        Contract::directed("Get the report", "target01", path("/home/finance/report.pdf"), 3000, "guest", "guest", Objective::ObtainResource)
+        Contract::directed(
+            "Get the report",
+            "target01",
+            path("/home/finance/report.pdf"),
+            3000,
+            "guest",
+            "guest",
+            Objective::ObtainResource,
+        )
     }
 
     fn sample_modify(required_content: &[u8]) -> Contract {
@@ -120,7 +149,9 @@ mod tests {
             3000,
             "guest",
             "guest",
-            Objective::ModifyResource { required_content: required_content.to_vec() },
+            Objective::ModifyResource {
+                required_content: required_content.to_vec(),
+            },
         )
     }
 
@@ -161,7 +192,10 @@ mod tests {
         let mut board = ContractBoard::new();
         let id = board.post(sample());
         board.accept(id).unwrap();
-        assert_eq!(board.accept(id).unwrap_err(), ContractError::NotAvailable(id));
+        assert_eq!(
+            board.accept(id).unwrap_err(),
+            ContractError::NotAvailable(id)
+        );
     }
 
     #[test]
@@ -169,7 +203,11 @@ mod tests {
         let mut board = ContractBoard::new();
         let id = board.post(sample());
         // still just Available, not accepted yet — must not resolve
-        assert!(board.record_download("target01", &path("/home/finance/report.pdf")).is_empty());
+        assert!(
+            board
+                .record_download("target01", &path("/home/finance/report.pdf"))
+                .is_empty()
+        );
 
         board.accept(id).unwrap();
         let completed = board.record_download("target01", &path("/home/finance/report.pdf"));
@@ -185,8 +223,16 @@ mod tests {
         let id = board.post(sample());
         board.accept(id).unwrap();
 
-        assert!(board.record_download("target01", &path("/etc/hostname")).is_empty());
-        assert!(board.record_download("other-host", &path("/home/finance/report.pdf")).is_empty());
+        assert!(
+            board
+                .record_download("target01", &path("/etc/hostname"))
+                .is_empty()
+        );
+        assert!(
+            board
+                .record_download("other-host", &path("/home/finance/report.pdf"))
+                .is_empty()
+        );
         assert_eq!(board.active().count(), 1);
     }
 
@@ -197,7 +243,11 @@ mod tests {
         board.accept(id).unwrap();
         board.record_download("target01", &path("/home/finance/report.pdf"));
 
-        assert!(board.record_download("target01", &path("/home/finance/report.pdf")).is_empty());
+        assert!(
+            board
+                .record_download("target01", &path("/home/finance/report.pdf"))
+                .is_empty()
+        );
     }
 
     #[test]
@@ -206,7 +256,11 @@ mod tests {
         let id = board.post(sample_modify(b"whatever"));
         board.accept(id).unwrap();
 
-        assert!(board.record_download("target01", &path("/home/finance/report.pdf")).is_empty());
+        assert!(
+            board
+                .record_download("target01", &path("/home/finance/report.pdf"))
+                .is_empty()
+        );
         assert_eq!(board.active().count(), 1);
     }
 
@@ -216,10 +270,19 @@ mod tests {
         let id = board.post(sample_modify(b"planted"));
         board.accept(id).unwrap();
 
-        assert!(board.record_modify("target01", &path("/home/finance/report.pdf"), b"wrong content").is_empty());
+        assert!(
+            board
+                .record_modify(
+                    "target01",
+                    &path("/home/finance/report.pdf"),
+                    b"wrong content"
+                )
+                .is_empty()
+        );
         assert_eq!(board.active().count(), 1);
 
-        let completed = board.record_modify("target01", &path("/home/finance/report.pdf"), b"planted");
+        let completed =
+            board.record_modify("target01", &path("/home/finance/report.pdf"), b"planted");
         assert_eq!(completed.len(), 1);
         assert_eq!(board.active().count(), 0);
         assert_eq!(board.completed().count(), 1);
@@ -231,7 +294,11 @@ mod tests {
         let id = board.post(sample());
         board.accept(id).unwrap();
 
-        assert!(board.record_modify("target01", &path("/home/finance/report.pdf"), b"anything").is_empty());
+        assert!(
+            board
+                .record_modify("target01", &path("/home/finance/report.pdf"), b"anything")
+                .is_empty()
+        );
         assert_eq!(board.active().count(), 1);
     }
 }

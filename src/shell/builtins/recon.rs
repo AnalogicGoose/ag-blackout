@@ -23,7 +23,10 @@ pub fn whois(shell: &mut Shell, args: &[String], _stdin: Option<&str>) -> Comman
     }
 
     for host in &hostnames {
-        shell.career.knowledge.record_organization(org_name.clone(), host.clone());
+        shell
+            .career
+            .knowledge
+            .record_organization(org_name.clone(), host.clone());
     }
 
     CommandOutput::ok(out)
@@ -44,11 +47,26 @@ pub fn scan(shell: &mut Shell, args: &[String], _stdin: Option<&str>) -> Command
     shell.career.knowledge.record_hostname(hostname.clone());
 
     let mut out = format!("{hostname}: host is up\n");
-    if shell.active_device().packages.installed.is_installed("nmap") {
-        let device = shell.network.get(hostname).expect("just checked reachability");
+    if shell
+        .active_device()
+        .packages
+        .installed
+        .is_installed("nmap")
+    {
+        let device = shell
+            .network
+            .get(hostname)
+            .expect("just checked reachability");
         for service in device.services.list() {
-            let state = if service.state == ServiceState::Running { "running" } else { "stopped" };
-            out.push_str(&format!("  {} {} ({state})\n", service.name, service.version));
+            let state = if service.state == ServiceState::Running {
+                "running"
+            } else {
+                "stopped"
+            };
+            out.push_str(&format!(
+                "  {} {} ({state})\n",
+                service.name, service.version
+            ));
         }
     }
 
@@ -74,7 +92,10 @@ pub fn intel(shell: &mut Shell, _args: &[String], _stdin: Option<&str>) -> Comma
     if !credentials.is_empty() {
         out.push_str("Known credentials:\n");
         for cred in credentials {
-            out.push_str(&format!("  {}/{} (found on {})\n", cred.username, cred.password, cred.found_on));
+            out.push_str(&format!(
+                "  {}/{} (found on {})\n",
+                cred.username, cred.password, cred.found_on
+            ));
         }
     }
 
@@ -137,7 +158,11 @@ mod tests {
     fn scan_with_nmap_installed_reveals_services_and_versions() {
         let mut shell = guest_shell();
         shell.network.register(Device::new("target01"));
-        shell.active_device_mut().packages.install(true, "nmap").unwrap();
+        shell
+            .active_device_mut()
+            .packages
+            .install(true, "nmap")
+            .unwrap();
 
         let result = shell.execute_line("scan target01");
         assert_eq!(result.exit_code, 0);
@@ -154,9 +179,16 @@ mod tests {
     #[test]
     fn intel_reviews_previously_discovered_hosts_and_credentials() {
         let mut shell = guest_shell();
-        shell.organizations.register(Organization::new("Meridian Analytics", "A data firm.", vec!["meridian-web01".to_string()]));
+        shell.organizations.register(Organization::new(
+            "Meridian Analytics",
+            "A data firm.",
+            vec!["meridian-web01".to_string()],
+        ));
         shell.execute_line("whois Meridian Analytics");
-        shell.career.knowledge.record_credential("analyst", "hunter2", "meridian-web01");
+        shell
+            .career
+            .knowledge
+            .record_credential("analyst", "hunter2", "meridian-web01");
 
         let out = shell.execute_line("intel").stdout;
         assert!(out.contains("meridian-web01"));

@@ -22,7 +22,9 @@ impl Sudoers {
     }
 
     pub fn permits(&self, db: &UserDatabase, uid: u32) -> bool {
-        let Some(user) = db.user_by_uid(uid) else { return false };
+        let Some(user) = db.user_by_uid(uid) else {
+            return false;
+        };
         if self.allowed_users.contains(&user.username) {
             return true;
         }

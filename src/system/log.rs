@@ -17,7 +17,11 @@ pub struct LogBook {
 
 impl LogBook {
     pub fn record(&mut self, source: impl Into<String>, message: impl Into<String>) {
-        self.entries.push(LogEntry { timestamp: SystemTime::now(), source: source.into(), message: message.into() });
+        self.entries.push(LogEntry {
+            timestamp: SystemTime::now(),
+            source: source.into(),
+            message: message.into(),
+        });
     }
 
     pub fn entries(&self) -> &[LogEntry] {

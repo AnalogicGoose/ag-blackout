@@ -10,7 +10,12 @@ pub fn pwd(shell: &mut Shell, _args: &[String], _stdin: Option<&str>) -> Command
 pub fn cd(shell: &mut Shell, args: &[String], _stdin: Option<&str>) -> CommandOutput {
     let target = match args.first() {
         Some(p) => p.clone(),
-        None => shell.context.env.get("HOME").cloned().unwrap_or_else(|| "/".to_string()),
+        None => shell
+            .context
+            .env
+            .get("HOME")
+            .cloned()
+            .unwrap_or_else(|| "/".to_string()),
     };
     let path = match VirtualPath::resolve(&shell.context.cwd, &target) {
         Ok(p) => p,
@@ -48,10 +53,17 @@ pub fn ls(shell: &mut Shell, args: &[String], _stdin: Option<&str>) -> CommandOu
         Err(e) => return CommandOutput::error(format!("ls: {e}\n")),
     };
     let access = shell.context.fs_access();
-    let mut entries = match shell.active_device_mut().filesystem.list_dir(&access, &path) {
+    let mut entries = match shell
+        .active_device_mut()
+        .filesystem
+        .list_dir(&access, &path)
+    {
         Ok(e) => e,
         Err(e) => {
-            return CommandOutput::error(format!("ls: cannot access '{}': {e}\n", path_arg.unwrap_or(".")))
+            return CommandOutput::error(format!(
+                "ls: cannot access '{}': {e}\n",
+                path_arg.unwrap_or(".")
+            ));
         }
     };
     entries.retain(|e| show_hidden || !e.is_hidden());
@@ -66,16 +78,31 @@ pub fn ls(shell: &mut Shell, args: &[String], _stdin: Option<&str>) -> CommandOu
         entries
             .iter()
             .map(|e| {
-                let owner = users.user_by_uid(e.owner_uid).map(|u| u.username.clone()).unwrap_or_else(|| e.owner_uid.to_string());
-                let group =
-                    users.group_by_gid(e.group_gid).map(|g| g.name.clone()).unwrap_or_else(|| e.group_gid.to_string());
-                format!("{} {owner:<8} {group:<8} {:>6} {}", e.permissions_string(), e.size, e.name)
+                let owner = users
+                    .user_by_uid(e.owner_uid)
+                    .map(|u| u.username.clone())
+                    .unwrap_or_else(|| e.owner_uid.to_string());
+                let group = users
+                    .group_by_gid(e.group_gid)
+                    .map(|g| g.name.clone())
+                    .unwrap_or_else(|| e.group_gid.to_string());
+                format!(
+                    "{} {owner:<8} {group:<8} {:>6} {}",
+                    e.permissions_string(),
+                    e.size,
+                    e.name
+                )
             })
             .collect::<Vec<_>>()
             .join("\n")
             + "\n"
     } else {
-        entries.iter().map(|e| e.name.clone()).collect::<Vec<_>>().join("  ") + "\n"
+        entries
+            .iter()
+            .map(|e| e.name.clone())
+            .collect::<Vec<_>>()
+            .join("  ")
+            + "\n"
     };
     CommandOutput::ok(out)
 }

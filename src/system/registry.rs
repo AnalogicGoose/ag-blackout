@@ -1,6 +1,6 @@
+use crate::filesystem::VirtualPath;
 use std::collections::BTreeMap;
 use std::fmt;
-use crate::filesystem::VirtualPath;
 
 use super::context::ExecutionContext;
 use super::group::Group;
@@ -118,7 +118,9 @@ impl UserDatabase {
     }
 
     pub fn user_by_name(&self, username: &str) -> Option<&User> {
-        self.usernames.get(username).and_then(|uid| self.users.get(uid))
+        self.usernames
+            .get(username)
+            .and_then(|uid| self.users.get(uid))
     }
 
     pub fn group_by_gid(&self, gid: u32) -> Option<&Group> {
@@ -152,7 +154,12 @@ impl UserDatabase {
     /// expects as its `groups` argument, since it adds the primary group itself.
     pub fn supplementary_groups_of(&self, uid: u32) -> Option<Vec<&Group>> {
         let user = self.user_by_uid(uid)?;
-        Some(user.supplementary_gids.iter().filter_map(|gid| self.group_by_gid(*gid)).collect())
+        Some(
+            user.supplementary_gids
+                .iter()
+                .filter_map(|gid| self.group_by_gid(*gid))
+                .collect(),
+        )
     }
 
     /// Builds the `ExecutionContext` a fresh login/`su`/`sudo` would start with.
@@ -173,11 +180,18 @@ impl UserDatabase {
             .into_iter()
             .map(|g| (g.gid, g.name.clone()))
             .collect();
-        Some(IdInfo { uid, username: user.username.clone(), gid: user.primary_gid, group_name, groups })
+        Some(IdInfo {
+            uid,
+            username: user.username.clone(),
+            gid: user.primary_gid,
+            group_name,
+            groups,
+        })
     }
 
     pub fn verify_password(&self, uid: u32, attempt: &str) -> bool {
-        self.user_by_uid(uid).is_some_and(|u| u.password.verify(attempt))
+        self.user_by_uid(uid)
+            .is_some_and(|u| u.password.verify(attempt))
     }
 
     pub fn set_password(&mut self, uid: u32, new_password: &str) -> bool {
@@ -200,11 +214,25 @@ impl UserDatabase {
     /// primary group (gid == uid), home `/home/<username>`, and a settable
     /// password. Used to give a target device its own credential instead of
     /// reusing `guest`/`guest` (see docs/GAME_DESIGN.md's Slice 1 status).
-    pub fn add_account(&mut self, uid: u32, username: impl Into<String>, password: &str) -> VirtualPath {
+    pub fn add_account(
+        &mut self,
+        uid: u32,
+        username: impl Into<String>,
+        password: &str,
+    ) -> VirtualPath {
         let username = username.into();
-        let home = VirtualPath::resolve(&VirtualPath::root(), &format!("/home/{username}")).unwrap();
+        let home =
+            VirtualPath::resolve(&VirtualPath::root(), &format!("/home/{username}")).unwrap();
         self.add_group(Group::new(uid, username.clone()));
-        self.add_user(User::new(uid, username, uid, vec![], home.clone(), "/bin/bash", PasswordState::set(password)));
+        self.add_user(User::new(
+            uid,
+            username,
+            uid,
+            vec![],
+            home.clone(),
+            "/bin/bash",
+            PasswordState::set(password),
+        ));
         home
     }
 }
@@ -239,14 +267,20 @@ mod tests {
     fn guest_id_info_has_no_supplementary_groups() {
         let db = UserDatabase::new();
         let id = db.id_info(1001).unwrap();
-        assert_eq!(id.to_string(), "uid=1001(guest) gid=1001(guest) groups=1001(guest)");
+        assert_eq!(
+            id.to_string(),
+            "uid=1001(guest) gid=1001(guest) groups=1001(guest)"
+        );
     }
 
     #[test]
     fn admin_id_info_includes_sudo_group() {
         let db = UserDatabase::new();
         let id = db.id_info(1000).unwrap();
-        assert_eq!(id.to_string(), "uid=1000(admin) gid=1000(admin) groups=1000(admin),27(sudo)");
+        assert_eq!(
+            id.to_string(),
+            "uid=1000(admin) gid=1000(admin) groups=1000(admin),27(sudo)"
+        );
     }
 
     #[test]

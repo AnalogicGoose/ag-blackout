@@ -7,7 +7,11 @@ pub fn ps(shell: &mut Shell, _args: &[String], _stdin: Option<&str>) -> CommandO
     let mut out = String::from("PID USER     COMMAND\n");
     let device = shell.active_device();
     for p in device.processes.list() {
-        let user = device.users.user_by_uid(p.uid).map(|u| u.username.clone()).unwrap_or_else(|| p.uid.to_string());
+        let user = device
+            .users
+            .user_by_uid(p.uid)
+            .map(|u| u.username.clone())
+            .unwrap_or_else(|| p.uid.to_string());
         out.push_str(&format!("{:<4}{user:<9}{}\n", p.pid, p.command));
     }
     CommandOutput::ok(out)
@@ -25,7 +29,13 @@ pub fn kill(shell: &mut Shell, args: &[String], _stdin: Option<&str>) -> Command
     let device = shell.active_device_mut();
     match device.processes.kill(uid, is_root, pid) {
         Ok(process) => {
-            device.logs.record("kill", format!("{} (pid {}) terminated by uid {uid}", process.command, process.pid));
+            device.logs.record(
+                "kill",
+                format!(
+                    "{} (pid {}) terminated by uid {uid}",
+                    process.command, process.pid
+                ),
+            );
             CommandOutput::empty_ok()
         }
         Err(e) => CommandOutput::error(format!("kill: ({pid}): {e}\n")),
@@ -36,7 +46,11 @@ pub fn service(shell: &mut Shell, args: &[String], _stdin: Option<&str>) -> Comm
     let Some(name) = args.first() else {
         let mut out = String::new();
         for s in shell.active_device().services.list() {
-            let state = if s.state == ServiceState::Running { "running" } else { "stopped" };
+            let state = if s.state == ServiceState::Running {
+                "running"
+            } else {
+                "stopped"
+            };
             out.push_str(&format!("{:<10}{state}\n", s.name));
         }
         return CommandOutput::ok(out);
@@ -48,7 +62,11 @@ pub fn service(shell: &mut Shell, args: &[String], _stdin: Option<&str>) -> Comm
     match action {
         "status" => match shell.active_device().services.get(name) {
             Some(s) => {
-                let state = if s.state == ServiceState::Running { "running" } else { "stopped" };
+                let state = if s.state == ServiceState::Running {
+                    "running"
+                } else {
+                    "stopped"
+                };
                 CommandOutput::ok(format!("{} is {state}\n", s.name))
             }
             None => CommandOutput::error(format!("service: unknown service: {name}\n")),
@@ -57,7 +75,9 @@ pub fn service(shell: &mut Shell, args: &[String], _stdin: Option<&str>) -> Comm
             let device = shell.active_device_mut();
             match device.services.start(&mut device.processes, is_root, name) {
                 Ok(()) => {
-                    device.logs.record("service", format!("{name} started by uid {uid}"));
+                    device
+                        .logs
+                        .record("service", format!("{name} started by uid {uid}"));
                     CommandOutput::empty_ok()
                 }
                 Err(e) => CommandOutput::error(format!("service: {name}: {e}\n")),
@@ -67,19 +87,29 @@ pub fn service(shell: &mut Shell, args: &[String], _stdin: Option<&str>) -> Comm
             let device = shell.active_device_mut();
             match device.services.stop(&mut device.processes, is_root, name) {
                 Ok(()) => {
-                    device.logs.record("service", format!("{name} stopped by uid {uid}"));
+                    device
+                        .logs
+                        .record("service", format!("{name} stopped by uid {uid}"));
                     CommandOutput::empty_ok()
                 }
                 Err(e) => CommandOutput::error(format!("service: {name}: {e}\n")),
             }
         }
-        other => CommandOutput::error(format!("service: unknown action '{other}' (expected status/start/stop)\n")),
+        other => CommandOutput::error(format!(
+            "service: unknown action '{other}' (expected status/start/stop)\n"
+        )),
     }
 }
 
 pub fn logs(shell: &mut Shell, _args: &[String], _stdin: Option<&str>) -> CommandOutput {
-    let out =
-        shell.active_device().logs.entries().iter().map(|e| format!("{}: {}", e.source, e.message)).collect::<Vec<_>>().join("\n");
+    let out = shell
+        .active_device()
+        .logs
+        .entries()
+        .iter()
+        .map(|e| format!("{}: {}", e.source, e.message))
+        .collect::<Vec<_>>()
+        .join("\n");
     CommandOutput::ok(if out.is_empty() { out } else { out + "\n" })
 }
 
@@ -97,7 +127,14 @@ mod tests {
     #[test]
     fn guest_cannot_kill_root_owned_process() {
         let mut shell = guest_shell();
-        let pid = shell.active_device().processes.list().iter().find(|p| p.command == "sshd").unwrap().pid;
+        let pid = shell
+            .active_device()
+            .processes
+            .list()
+            .iter()
+            .find(|p| p.command == "sshd")
+            .unwrap()
+            .pid;
         let result = shell.execute_line(&format!("kill {pid}"));
         assert_eq!(result.exit_code, 1);
     }
@@ -106,7 +143,14 @@ mod tests {
     fn root_can_kill_any_process() {
         let mut shell = admin_shell();
         shell.context.uid = 0; // pretend we escalated for this check
-        let pid = shell.active_device().processes.list().iter().find(|p| p.command == "sshd").unwrap().pid;
+        let pid = shell
+            .active_device()
+            .processes
+            .list()
+            .iter()
+            .find(|p| p.command == "sshd")
+            .unwrap()
+            .pid;
         let result = shell.execute_line(&format!("kill {pid}"));
         assert_eq!(result.exit_code, 0);
         assert!(shell.execute_line("logs").stdout.contains("terminated"));
@@ -139,10 +183,21 @@ mod tests {
         let mut shell = guest_shell();
         shell.context.uid = 0;
         assert_eq!(shell.execute_line("service sshd stop").exit_code, 0);
-        assert_eq!(shell.execute_line("service sshd status").stdout, "sshd is stopped\n");
+        assert_eq!(
+            shell.execute_line("service sshd status").stdout,
+            "sshd is stopped\n"
+        );
         assert_eq!(shell.execute_line("service sshd start").exit_code, 0);
-        assert_eq!(shell.execute_line("service sshd status").stdout, "sshd is running\n");
-        assert!(shell.execute_line("logs").stdout.contains("stopped by uid 0"));
+        assert_eq!(
+            shell.execute_line("service sshd status").stdout,
+            "sshd is running\n"
+        );
+        assert!(
+            shell
+                .execute_line("logs")
+                .stdout
+                .contains("stopped by uid 0")
+        );
     }
 
     #[test]

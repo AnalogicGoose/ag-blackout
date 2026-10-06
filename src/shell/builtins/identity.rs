@@ -34,7 +34,11 @@ pub fn groups(shell: &mut Shell, args: &[String], _stdin: Option<&str>) -> Comma
     };
     match shell.active_device().users.groups_of(uid) {
         Some(gs) => {
-            let names = gs.iter().map(|g| g.name.clone()).collect::<Vec<_>>().join(" ");
+            let names = gs
+                .iter()
+                .map(|g| g.name.clone())
+                .collect::<Vec<_>>()
+                .join(" ");
             CommandOutput::ok(format!("{names}\n"))
         }
         None => CommandOutput::error("groups: cannot find user\n"),
@@ -53,7 +57,10 @@ mod tests {
     #[test]
     fn id_reports_full_identity_string() {
         let result = admin_shell().execute_line("id");
-        assert_eq!(result.stdout, "uid=1000(admin) gid=1000(admin) groups=1000(admin),27(sudo)\n");
+        assert_eq!(
+            result.stdout,
+            "uid=1000(admin) gid=1000(admin) groups=1000(admin),27(sudo)\n"
+        );
     }
 
     #[test]

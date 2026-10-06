@@ -1,13 +1,15 @@
 use std::time::Duration;
 
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind};
+use crossterm::event::{
+    self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind,
+};
+use ratatui::Terminal;
 use ratatui::backend::Backend;
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
-use ratatui::Terminal;
 
 use crate::filesystem::VirtualPath;
-use crate::shell::{builtins, parser, scenario, LineResult, Shell};
+use crate::shell::{LineResult, Shell, builtins, parser, scenario};
 
 use super::render;
 
@@ -74,7 +76,9 @@ impl App {
             sudo_password: String::new(),
         };
         app.push_plain("AG Linux 1.0.0 (Blackbird) — AnalogicGoose");
-        app.push_plain("Type 'contracts' to see available jobs, 'contracts accept <id>' to take one.");
+        app.push_plain(
+            "Type 'contracts' to see available jobs, 'contracts accept <id>' to take one.",
+        );
         app.push_plain("Some jobs hand over a target and login directly; others only give you a lead to investigate.");
         app.push_plain("");
         app
@@ -85,8 +89,17 @@ impl App {
     }
 
     pub fn prompt_string(&self) -> String {
-        let user = self.shell.active_device().users.whoami(self.shell.context.uid).unwrap_or("?");
-        format!("{user}@{}:{}$ ", self.shell.active_hostname(), self.shell.context.cwd)
+        let user = self
+            .shell
+            .active_device()
+            .users
+            .whoami(self.shell.context.uid)
+            .unwrap_or("?");
+        format!(
+            "{user}@{}:{}$ ",
+            self.shell.active_hostname(),
+            self.shell.context.cwd
+        )
     }
 
     /// Whether the prompt should use the remote-session color — the
@@ -105,7 +118,11 @@ impl App {
     }
 
     fn byte_index_of(&self, char_index: usize) -> usize {
-        self.input.char_indices().map(|(i, _)| i).nth(char_index).unwrap_or(self.input.len())
+        self.input
+            .char_indices()
+            .map(|(i, _)| i)
+            .nth(char_index)
+            .unwrap_or(self.input.len())
     }
 
     fn insert_char(&mut self, c: char) {
@@ -220,14 +237,21 @@ impl App {
 
     fn current_word(&self) -> String {
         let start = self.current_word_start();
-        self.input.chars().skip(start).take(self.cursor - start).collect()
+        self.input
+            .chars()
+            .skip(start)
+            .take(self.cursor - start)
+            .collect()
     }
 
     /// True only when the word under the cursor is the line's first word —
     /// i.e. everything before it is whitespace. That's the one position
     /// completion treats as "a command name" rather than a path.
     fn completing_command_name(&self) -> bool {
-        self.input.chars().take(self.current_word_start()).all(char::is_whitespace)
+        self.input
+            .chars()
+            .take(self.current_word_start())
+            .all(char::is_whitespace)
     }
 
     /// Every whitespace-separated word before the one under the cursor —
@@ -236,7 +260,9 @@ impl App {
     /// lightweight whitespace scan as `current_word_start`, not the real
     /// parser (see that method's doc comment for why).
     fn preceding_words(&self) -> Vec<&str> {
-        self.input[..self.byte_index_of(self.current_word_start())].split_whitespace().collect()
+        self.input[..self.byte_index_of(self.current_word_start())]
+            .split_whitespace()
+            .collect()
     }
 
     /// Completion candidates for the word under the cursor: command names
@@ -249,13 +275,17 @@ impl App {
     fn completion_candidates(&self) -> Vec<String> {
         let word = self.current_word();
         if self.completing_command_name() {
-            let mut names: Vec<String> =
-                builtins::table().keys().filter(|name| name.starts_with(&word)).map(|name| name.to_string()).collect();
+            let mut names: Vec<String> = builtins::table()
+                .keys()
+                .filter(|name| name.starts_with(&word))
+                .map(|name| name.to_string())
+                .collect();
             names.sort();
             names
         } else {
             let preceding = self.preceding_words();
-            self.argument_completion_candidates(&preceding, &word).unwrap_or_else(|| self.path_completion_candidates(&word))
+            self.argument_completion_candidates(&preceding, &word)
+                .unwrap_or_else(|| self.path_completion_candidates(&word))
         }
     }
 
@@ -263,7 +293,11 @@ impl App {
     /// or `None` to fall back to generic path completion. Covers the
     /// arguments whose real values are cheap to enumerate and worth
     /// completing: service names, AGPKG package names, contract ids, pids.
-    fn argument_completion_candidates(&self, preceding: &[&str], partial: &str) -> Option<Vec<String>> {
+    fn argument_completion_candidates(
+        &self,
+        preceding: &[&str],
+        partial: &str,
+    ) -> Option<Vec<String>> {
         let candidates = match preceding {
             ["service"] => self.active_service_names(),
             ["agpkg", "install"] => self.installable_package_names(),
@@ -272,13 +306,22 @@ impl App {
             ["kill"] => self.active_pids(),
             _ => return None,
         };
-        let mut matches: Vec<String> = candidates.into_iter().filter(|c| c.starts_with(partial)).collect();
+        let mut matches: Vec<String> = candidates
+            .into_iter()
+            .filter(|c| c.starts_with(partial))
+            .collect();
         matches.sort();
         Some(matches)
     }
 
     fn active_service_names(&self) -> Vec<String> {
-        self.shell.active_device().services.list().into_iter().map(|s| s.name.clone()).collect()
+        self.shell
+            .active_device()
+            .services
+            .list()
+            .into_iter()
+            .map(|s| s.name.clone())
+            .collect()
     }
 
     /// AGPKG catalog entries not already installed — installing an
@@ -297,15 +340,32 @@ impl App {
     }
 
     fn installed_package_names(&self) -> Vec<String> {
-        self.shell.active_device().packages.installed.list().into_iter().map(|p| p.name.clone()).collect()
+        self.shell
+            .active_device()
+            .packages
+            .installed
+            .list()
+            .into_iter()
+            .map(|p| p.name.clone())
+            .collect()
     }
 
     fn available_contract_ids(&self) -> Vec<String> {
-        self.shell.contracts.available().map(|c| c.id.to_string()).collect()
+        self.shell
+            .contracts
+            .available()
+            .map(|c| c.id.to_string())
+            .collect()
     }
 
     fn active_pids(&self) -> Vec<String> {
-        self.shell.active_device().processes.list().into_iter().map(|p| p.pid.to_string()).collect()
+        self.shell
+            .active_device()
+            .processes
+            .list()
+            .into_iter()
+            .map(|p| p.pid.to_string())
+            .collect()
     }
 
     fn path_completion_candidates(&self, partial: &str) -> Vec<String> {
@@ -322,16 +382,26 @@ impl App {
             }
         };
         let access = self.shell.context.fs_access();
-        let Ok(mut entries) = self.shell.active_device().filesystem.list_dir(&access, &dir_path) else {
+        let Ok(mut entries) = self
+            .shell
+            .active_device()
+            .filesystem
+            .list_dir(&access, &dir_path)
+        else {
             return Vec::new();
         };
-        entries.retain(|e| e.name.starts_with(prefix) && (prefix.starts_with('.') || !e.is_hidden()));
+        entries
+            .retain(|e| e.name.starts_with(prefix) && (prefix.starts_with('.') || !e.is_hidden()));
         entries.sort_by(|a, b| a.name.cmp(&b.name));
         entries
             .into_iter()
             .map(|e| {
                 let full = format!("{dir_part}{}", e.name);
-                if e.node_type == 'd' { format!("{full}/") } else { full }
+                if e.node_type == 'd' {
+                    format!("{full}/")
+                } else {
+                    full
+                }
             })
             .collect()
     }
@@ -359,7 +429,8 @@ impl App {
             replacement.push(' ');
         }
         let inserted_chars = replacement.chars().count();
-        self.input.replace_range(start_byte..cursor_byte, &replacement);
+        self.input
+            .replace_range(start_byte..cursor_byte, &replacement);
         self.cursor = start + inserted_chars;
     }
 
@@ -394,7 +465,9 @@ impl App {
     }
 
     fn reverse_search_match(&self, query: &str, upper: usize) -> Option<usize> {
-        self.history[..upper].iter().rposition(|entry| entry.contains(query))
+        self.history[..upper]
+            .iter()
+            .rposition(|entry| entry.contains(query))
     }
 
     /// Re-runs the search from the most recent history entry, called after
@@ -407,7 +480,8 @@ impl App {
             self.cursor = self.char_len();
             return;
         }
-        self.search_history_index = self.reverse_search_match(&self.search_query, self.history.len());
+        self.search_history_index =
+            self.reverse_search_match(&self.search_query, self.history.len());
         if let Some(i) = self.search_history_index {
             self.input = self.history[i].clone();
             self.cursor = self.char_len();
@@ -417,7 +491,9 @@ impl App {
     /// Ctrl+R while already searching: steps to the next older match for the
     /// same query, if any. A no-op until at least one match has been found.
     fn reverse_search_older(&mut self) {
-        let Some(current) = self.search_history_index else { return };
+        let Some(current) = self.search_history_index else {
+            return;
+        };
         if let Some(i) = self.reverse_search_match(&self.search_query, current) {
             self.search_history_index = Some(i);
             self.input = self.history[i].clone();
@@ -446,7 +522,11 @@ impl App {
     fn submit(&mut self) {
         let input = self.input.clone();
         let prompt = self.prompt_string();
-        let prompt_color = if self.is_connected_remotely() { Color::Cyan } else { Color::Green };
+        let prompt_color = if self.is_connected_remotely() {
+            Color::Cyan
+        } else {
+            Color::Green
+        };
         self.lines.push(Line::from(vec![
             Span::styled(prompt, Style::default().fg(prompt_color)),
             Span::raw(input.clone()),
@@ -482,9 +562,12 @@ impl App {
                     && !matches!(stage.argv[1].as_str(), "-h" | "--help")
             });
 
-        if needs_sudo_prompt {
+        if needs_sudo_prompt && !self.shell.sudo_is_cached() {
             let device = self.shell.active_device();
-            if device.sudoers.permits(&device.users, self.shell.context.uid) {
+            if device
+                .sudoers
+                .permits(&device.users, self.shell.context.uid)
+            {
                 self.pending_sudo = Some(trimmed.to_string());
                 return;
             }
@@ -525,7 +608,10 @@ impl App {
     /// `scroll_offset` grow past the real maximum meant scrolling back down
     /// had to "pay off" the invisible excess before the screen visibly moved.
     fn scroll_up(&mut self, lines: u16) {
-        self.scroll_offset = self.scroll_offset.saturating_add(lines).min(self.max_scroll());
+        self.scroll_offset = self
+            .scroll_offset
+            .saturating_add(lines)
+            .min(self.max_scroll());
     }
 
     fn scroll_down(&mut self, lines: u16) {
@@ -725,8 +811,11 @@ pub fn run<B: Backend>(terminal: &mut Terminal<B>) -> std::io::Result<()> {
         let full_height = terminal.size()?.height;
         // Must match render.rs's own split: the status line steals one row
         // from the scrollback while Scroll Mode or reverse-search is active.
-        let viewport_height =
-            if app.mode == AppMode::Scroll || app.mode == AppMode::ReverseSearch { full_height.saturating_sub(1) } else { full_height };
+        let viewport_height = if app.mode == AppMode::Scroll || app.mode == AppMode::ReverseSearch {
+            full_height.saturating_sub(1)
+        } else {
+            full_height
+        };
         app.set_viewport_height(viewport_height);
 
         terminal.draw(|frame| render::draw(frame, &app))?;
@@ -756,11 +845,19 @@ mod tests {
     }
 
     fn ctrl_shift_space() -> KeyEvent {
-        KeyEvent::new(KeyCode::Char(' '), KeyModifiers::CONTROL | KeyModifiers::SHIFT)
+        KeyEvent::new(
+            KeyCode::Char(' '),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        )
     }
 
     fn wheel(kind: MouseEventKind) -> MouseEvent {
-        MouseEvent { kind, column: 0, row: 0, modifiers: KeyModifiers::NONE }
+        MouseEvent {
+            kind,
+            column: 0,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        }
     }
 
     fn type_str(app: &mut App, s: &str) {
@@ -780,23 +877,45 @@ mod tests {
         app.shell.execute_line("su admin admin123");
 
         submit_line(&mut app, "sudo whoami");
-        assert_eq!(app.sudo_prompt().as_deref(), Some("[sudo] password for admin: "));
+        assert_eq!(
+            app.sudo_prompt().as_deref(),
+            Some("[sudo] password for admin: ")
+        );
         type_str(&mut app, "admin123");
         assert!(app.input.is_empty());
         assert_eq!(app.history.last().map(String::as_str), Some("sudo whoami"));
-        assert!(!app.lines.iter().any(|line| line.spans.iter().any(|span| span.content.contains("admin123"))));
+        assert!(!app.lines.iter().any(|line| {
+            line.spans
+                .iter()
+                .any(|span| span.content.contains("admin123"))
+        }));
 
         let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(80, 20)).unwrap();
         terminal.draw(|frame| render::draw(frame, &app)).unwrap();
-        let screen = terminal.backend().buffer().content().iter().map(|cell| cell.symbol()).collect::<Vec<_>>().join("");
+        let screen = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<Vec<_>>()
+            .join("");
         assert!(screen.contains("[sudo] password for admin:"));
         assert!(!screen.contains("admin123"));
 
         app.handle_key(key(KeyCode::Enter));
         assert!(app.sudo_prompt().is_none());
-        assert!(app.lines.iter().any(|line| line.spans.iter().any(|span| span.content == "root")));
+        assert!(
+            app.lines
+                .iter()
+                .any(|line| line.spans.iter().any(|span| span.content == "root"))
+        );
         assert_eq!(app.shell.execute_line("whoami").stdout.trim(), "admin");
-        assert!(!app.lines.iter().any(|line| line.spans.iter().any(|span| span.content.contains("admin123"))));
+        assert!(!app.lines.iter().any(|line| {
+            line.spans
+                .iter()
+                .any(|span| span.content.contains("admin123"))
+        }));
     }
 
     #[test]
@@ -809,7 +928,28 @@ mod tests {
         app.handle_key(key(KeyCode::Esc));
         assert!(app.sudo_prompt().is_none());
         assert!(app.sudo_password.is_empty());
-        assert!(!app.lines.iter().any(|line| line.spans.iter().any(|span| span.content == "root")));
+        assert!(
+            !app.lines
+                .iter()
+                .any(|line| line.spans.iter().any(|span| span.content == "root"))
+        );
+        assert_eq!(app.shell.execute_line("whoami").stdout.trim(), "admin");
+    }
+
+    #[test]
+    fn cached_sudo_runs_without_another_password_prompt() {
+        let mut app = App::new();
+        app.shell.execute_line("su admin admin123");
+
+        submit_line(&mut app, "sudo whoami");
+        assert!(app.sudo_prompt().is_some());
+        type_str(&mut app, "admin123");
+        app.handle_key(key(KeyCode::Enter));
+
+        let lines_before = app.lines.len();
+        submit_line(&mut app, "sudo whoami");
+        assert!(app.sudo_prompt().is_none());
+        assert!(app.lines.len() > lines_before);
         assert_eq!(app.shell.execute_line("whoami").stdout.trim(), "admin");
     }
 
@@ -1108,7 +1248,11 @@ mod tests {
         app.handle_key(key(KeyCode::Enter));
 
         assert_eq!(app.shell.economy.balance(), 3000);
-        assert!(app.lines.iter().any(|l| l.spans.iter().any(|s| s.content.contains("Contract complete"))));
+        assert!(app.lines.iter().any(|l| {
+            l.spans
+                .iter()
+                .any(|s| s.content.contains("Contract complete"))
+        }));
     }
 
     #[test]
@@ -1161,10 +1305,16 @@ mod tests {
         for _ in 0..50 {
             app.handle_key(key(KeyCode::Up));
         }
-        assert_eq!(app.scroll_offset, 2, "should stop at the true top (5 - 3), not keep growing");
+        assert_eq!(
+            app.scroll_offset, 2,
+            "should stop at the true top (5 - 3), not keep growing"
+        );
 
         app.handle_key(key(KeyCode::Down));
-        assert_eq!(app.scroll_offset, 1, "must move immediately, no leftover overshoot to pay off first");
+        assert_eq!(
+            app.scroll_offset, 1,
+            "must move immediately, no leftover overshoot to pay off first"
+        );
     }
 
     #[test]
@@ -1225,7 +1375,14 @@ mod tests {
         app.handle_key(key(KeyCode::Tab));
         assert_eq!(app.input, "con");
         assert!(app.lines.len() > lines_before);
-        let listed = app.lines.last().unwrap().spans.iter().map(|s| s.content.to_string()).collect::<String>();
+        let listed = app
+            .lines
+            .last()
+            .unwrap()
+            .spans
+            .iter()
+            .map(|s| s.content.to_string())
+            .collect::<String>();
         assert!(listed.contains("connect"));
         assert!(listed.contains("contracts"));
     }
@@ -1277,11 +1434,15 @@ mod tests {
     #[test]
     fn tab_only_offers_not_yet_installed_packages_for_agpkg_install() {
         let mut app = App::new();
-        app.shell.active_device_mut().packages.installed.insert(crate::package::InstalledPackage {
-            name: "nmap".to_string(),
-            version: "7.94".to_string(),
-            explicit: true,
-        });
+        app.shell
+            .active_device_mut()
+            .packages
+            .installed
+            .insert(crate::package::InstalledPackage {
+                name: "nmap".to_string(),
+                version: "7.94".to_string(),
+                explicit: true,
+            });
         type_str(&mut app, "agpkg install nm");
         let lines_before = app.lines.len();
         app.handle_key(key(KeyCode::Tab));
@@ -1292,11 +1453,15 @@ mod tests {
     #[test]
     fn tab_completes_an_installed_package_name_for_agpkg_remove() {
         let mut app = App::new();
-        app.shell.active_device_mut().packages.installed.insert(crate::package::InstalledPackage {
-            name: "nmap".to_string(),
-            version: "7.94".to_string(),
-            explicit: true,
-        });
+        app.shell
+            .active_device_mut()
+            .packages
+            .installed
+            .insert(crate::package::InstalledPackage {
+                name: "nmap".to_string(),
+                version: "7.94".to_string(),
+                explicit: true,
+            });
         type_str(&mut app, "agpkg remove nm");
         app.handle_key(key(KeyCode::Tab));
         assert_eq!(app.input, "agpkg remove nmap ");

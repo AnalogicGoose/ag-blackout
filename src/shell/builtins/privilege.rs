@@ -16,6 +16,7 @@ pub fn su(shell: &mut Shell, args: &[String], _stdin: Option<&str>) -> CommandOu
         false,
     ) {
         Ok(context) => {
+            shell.clear_sudo_cache();
             shell.context = context;
             CommandOutput::empty_ok()
         }
@@ -23,18 +24,8 @@ pub fn su(shell: &mut Shell, args: &[String], _stdin: Option<&str>) -> CommandOu
     }
 }
 
-pub fn sudo(shell: &mut Shell, args: &[String], _stdin: Option<&str>) -> CommandOutput {
-    if args.is_empty() {
-        return CommandOutput::error("sudo: usage: sudo <command> [args...]\n");
-    }
-
-    let device = shell.active_device();
-    if !device.sudoers.permits(&device.users, shell.context.uid) {
-        let user = device.users.whoami(shell.context.uid).unwrap_or("unknown");
-        return CommandOutput::error(format!("sudo: {user} is not in the sudoers file.\n"));
-    }
-
-    CommandOutput::error("sudo: interactive password prompt required\n")
+pub fn sudo(shell: &mut Shell, args: &[String], stdin: Option<&str>) -> CommandOutput {
+    shell.run_sudo_command(args, None, stdin)
 }
 
 #[cfg(test)]
@@ -57,13 +48,20 @@ mod tests {
         let mut shell = guest_shell();
         shell.execute_line("su admin admin123");
 
-        assert_eq!(shell.execute_sudo("sudo whoami", "admin123").stdout.trim(), "root");
-        assert_eq!(shell.execute_line("whoami").stdout.trim(), "admin");
-
         assert_ne!(shell.execute_sudo("sudo whoami", "wrong").exit_code, 0);
+        assert_eq!(
+            shell.execute_sudo("sudo whoami", "admin123").stdout.trim(),
+            "root"
+        );
         assert_eq!(shell.execute_line("whoami").stdout.trim(), "admin");
 
-        assert_ne!(shell.execute_sudo("sudo nonexistent", "admin123").exit_code, 0);
+        assert_eq!(shell.execute_line("sudo whoami").stdout.trim(), "root");
+        assert_eq!(shell.execute_line("whoami").stdout.trim(), "admin");
+
+        assert_ne!(
+            shell.execute_sudo("sudo nonexistent", "admin123").exit_code,
+            0
+        );
         assert_eq!(shell.execute_line("whoami").stdout.trim(), "admin");
     }
 
@@ -75,7 +73,10 @@ mod tests {
         assert_eq!(shell.execute_line("whoami").stdout.trim(), "guest");
 
         shell.execute_line("su admin admin123");
-        assert_ne!(shell.execute_sudo("sudo disconnect", "admin123").exit_code, 0);
+        assert_ne!(
+            shell.execute_sudo("sudo disconnect", "admin123").exit_code,
+            0
+        );
         assert_eq!(shell.execute_line("whoami").stdout.trim(), "admin");
     }
 }

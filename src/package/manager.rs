@@ -28,7 +28,10 @@ pub struct PackageManager {
 
 impl PackageManager {
     pub fn new() -> Self {
-        PackageManager { repository: Repository::new(), installed: InstalledDatabase::new() }
+        PackageManager {
+            repository: Repository::new(),
+            installed: InstalledDatabase::new(),
+        }
     }
 
     pub fn search(&self, query: &str) -> Vec<&PackageManifest> {
@@ -66,7 +69,11 @@ impl PackageManager {
             if self.installed.is_installed(pkg_name) {
                 continue;
             }
-            let manifest = self.repository.get(pkg_name).expect("resolved from the repository").clone();
+            let manifest = self
+                .repository
+                .get(pkg_name)
+                .expect("resolved from the repository")
+                .clone();
             self.installed.insert(InstalledPackage {
                 name: manifest.name,
                 version: manifest.version,
@@ -77,12 +84,20 @@ impl PackageManager {
         Ok(newly_installed)
     }
 
-    fn resolve_deps(&self, name: &str, order: &mut Vec<String>, visiting: &mut Vec<String>) -> Result<(), PackageError> {
+    fn resolve_deps(
+        &self,
+        name: &str,
+        order: &mut Vec<String>,
+        visiting: &mut Vec<String>,
+    ) -> Result<(), PackageError> {
         if order.contains(&name.to_string()) || visiting.contains(&name.to_string()) {
             return Ok(());
         }
         visiting.push(name.to_string());
-        let manifest = self.repository.get(name).ok_or_else(|| PackageError::NotFound(name.to_string()))?;
+        let manifest = self
+            .repository
+            .get(name)
+            .ok_or_else(|| PackageError::NotFound(name.to_string()))?;
         for dep in &manifest.dependencies {
             self.resolve_deps(dep, order, visiting)?;
         }
@@ -112,7 +127,10 @@ impl PackageManager {
             .list()
             .into_iter()
             .find(|pkg| {
-                self.repository.get(&pkg.name).map(|m| m.dependencies.iter().any(|d| d == name)).unwrap_or(false)
+                self.repository
+                    .get(&pkg.name)
+                    .map(|m| m.dependencies.iter().any(|d| d == name))
+                    .unwrap_or(false)
             })
             .map(|pkg| pkg.name.clone())
     }
@@ -133,10 +151,22 @@ impl PackageManager {
             return Err(PackageError::NotPermitted);
         }
         let mut upgraded = Vec::new();
-        let names: Vec<String> = self.installed.list().iter().map(|p| p.name.clone()).collect();
+        let names: Vec<String> = self
+            .installed
+            .list()
+            .iter()
+            .map(|p| p.name.clone())
+            .collect();
         for name in names {
-            let Some(manifest) = self.repository.get(&name) else { continue };
-            let current_version = self.installed.get(&name).expect("just listed").version.clone();
+            let Some(manifest) = self.repository.get(&name) else {
+                continue;
+            };
+            let current_version = self
+                .installed
+                .get(&name)
+                .expect("just listed")
+                .version
+                .clone();
             if current_version != manifest.version {
                 self.installed.set_version(&name, manifest.version.clone());
                 upgraded.push(name);
@@ -159,13 +189,19 @@ mod tests {
     #[test]
     fn install_requires_root() {
         let mut pm = PackageManager::new();
-        assert_eq!(pm.install(false, "nmap").unwrap_err(), PackageError::NotPermitted);
+        assert_eq!(
+            pm.install(false, "nmap").unwrap_err(),
+            PackageError::NotPermitted
+        );
     }
 
     #[test]
     fn install_unknown_package_fails() {
         let mut pm = PackageManager::new();
-        assert_eq!(pm.install(true, "nope").unwrap_err(), PackageError::NotFound("nope".to_string()));
+        assert_eq!(
+            pm.install(true, "nope").unwrap_err(),
+            PackageError::NotFound("nope".to_string())
+        );
     }
 
     #[test]
@@ -182,7 +218,10 @@ mod tests {
     fn installing_twice_fails_the_second_time() {
         let mut pm = PackageManager::new();
         pm.install(true, "git").unwrap();
-        assert_eq!(pm.install(true, "git").unwrap_err(), PackageError::AlreadyInstalled("git".to_string()));
+        assert_eq!(
+            pm.install(true, "git").unwrap_err(),
+            PackageError::AlreadyInstalled("git".to_string())
+        );
     }
 
     #[test]
@@ -197,20 +236,29 @@ mod tests {
     fn remove_requires_root() {
         let mut pm = PackageManager::new();
         pm.install(true, "git").unwrap();
-        assert_eq!(pm.remove(false, "git").unwrap_err(), PackageError::NotPermitted);
+        assert_eq!(
+            pm.remove(false, "git").unwrap_err(),
+            PackageError::NotPermitted
+        );
     }
 
     #[test]
     fn remove_not_installed_fails() {
         let mut pm = PackageManager::new();
-        assert_eq!(pm.remove(true, "git").unwrap_err(), PackageError::NotInstalled("git".to_string()));
+        assert_eq!(
+            pm.remove(true, "git").unwrap_err(),
+            PackageError::NotInstalled("git".to_string())
+        );
     }
 
     #[test]
     fn remove_blocked_while_a_dependent_is_installed() {
         let mut pm = PackageManager::new();
         pm.install(true, "nmap").unwrap();
-        assert_eq!(pm.remove(true, "openssl").unwrap_err(), PackageError::RequiredBy("openssl".to_string(), "nmap".to_string()));
+        assert_eq!(
+            pm.remove(true, "openssl").unwrap_err(),
+            PackageError::RequiredBy("openssl".to_string(), "nmap".to_string())
+        );
         pm.remove(true, "nmap").unwrap();
         assert!(pm.remove(true, "openssl").is_ok());
     }

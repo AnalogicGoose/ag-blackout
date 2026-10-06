@@ -17,15 +17,26 @@ pub struct Node {
 
 impl Node {
     pub fn new_file(metadata: Metadata, content: Vec<u8>) -> Self {
-        Node { metadata, kind: NodeKind::File { content } }
+        Node {
+            metadata,
+            kind: NodeKind::File { content },
+        }
     }
 
     pub fn new_dir(metadata: Metadata) -> Self {
-        Node { metadata, kind: NodeKind::Directory { children: BTreeMap::new() } }
+        Node {
+            metadata,
+            kind: NodeKind::Directory {
+                children: BTreeMap::new(),
+            },
+        }
     }
 
     pub fn new_symlink(metadata: Metadata, target: String) -> Self {
-        Node { metadata, kind: NodeKind::Symlink { target } }
+        Node {
+            metadata,
+            kind: NodeKind::Symlink { target },
+        }
     }
 
     pub fn is_dir(&self) -> bool {

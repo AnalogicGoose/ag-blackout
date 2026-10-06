@@ -169,7 +169,11 @@ impl VirtualFS {
         Ok(self.get(&resolved)?.metadata.clone())
     }
 
-    pub fn symlink_metadata(&self, access: &FsAccess, path: &VirtualPath) -> Result<Metadata, FsError> {
+    pub fn symlink_metadata(
+        &self,
+        access: &FsAccess,
+        path: &VirtualPath,
+    ) -> Result<Metadata, FsError> {
         let resolved = self.resolve_path(access, path, false)?;
         Ok(self.get(&resolved)?.metadata.clone())
     }
@@ -195,11 +199,17 @@ impl VirtualFS {
                 Ok(content.clone())
             }
             NodeKind::Directory { .. } => Err(FsError::IsADirectory(resolved.to_string())),
-            NodeKind::Symlink { .. } => unreachable!("resolve_path always follows the final symlink here"),
+            NodeKind::Symlink { .. } => {
+                unreachable!("resolve_path always follows the final symlink here")
+            }
         }
     }
 
-    pub fn list_dir(&self, access: &FsAccess, path: &VirtualPath) -> Result<Vec<DirEntry>, FsError> {
+    pub fn list_dir(
+        &self,
+        access: &FsAccess,
+        path: &VirtualPath,
+    ) -> Result<Vec<DirEntry>, FsError> {
         let resolved = self.resolve_path(access, path, true)?;
         let node = self.get(&resolved)?;
         if !node.is_dir() {
@@ -232,7 +242,12 @@ impl VirtualFS {
 
     // ---- writes -------------------------------------------------------------
 
-    fn create_node(&mut self, access: &FsAccess, path: &VirtualPath, node: Node) -> Result<(), FsError> {
+    fn create_node(
+        &mut self,
+        access: &FsAccess,
+        path: &VirtualPath,
+        node: Node,
+    ) -> Result<(), FsError> {
         let (parent_path, name) = self.split_parent(path)?;
         let resolved_parent = self.resolve_path(access, &parent_path, true)?;
         let parent = self.get_mut(&resolved_parent)?;
@@ -255,7 +270,12 @@ impl VirtualFS {
         self.create_node(access, path, Node::new_dir(metadata))
     }
 
-    fn create_file(&mut self, access: &FsAccess, path: &VirtualPath, contents: &[u8]) -> Result<(), FsError> {
+    fn create_file(
+        &mut self,
+        access: &FsAccess,
+        path: &VirtualPath,
+        contents: &[u8],
+    ) -> Result<(), FsError> {
         let metadata = Metadata::new(Mode::rw_file(), access.uid, access.primary_gid());
         self.create_node(access, path, Node::new_file(metadata, contents.to_vec()))
     }
@@ -272,7 +292,12 @@ impl VirtualFS {
         }
     }
 
-    pub fn write_file(&mut self, access: &FsAccess, path: &VirtualPath, contents: &[u8]) -> Result<(), FsError> {
+    pub fn write_file(
+        &mut self,
+        access: &FsAccess,
+        path: &VirtualPath,
+        contents: &[u8],
+    ) -> Result<(), FsError> {
         match self.resolve_path(access, path, true) {
             Ok(resolved) => {
                 let node = self.get_mut(&resolved)?;
@@ -292,9 +317,18 @@ impl VirtualFS {
         }
     }
 
-    pub fn symlink(&mut self, access: &FsAccess, target: &str, link_path: &VirtualPath) -> Result<(), FsError> {
+    pub fn symlink(
+        &mut self,
+        access: &FsAccess,
+        target: &str,
+        link_path: &VirtualPath,
+    ) -> Result<(), FsError> {
         let metadata = Metadata::new(Mode::new(0o777), access.uid, access.primary_gid());
-        self.create_node(access, link_path, Node::new_symlink(metadata, target.to_string()))
+        self.create_node(
+            access,
+            link_path,
+            Node::new_symlink(metadata, target.to_string()),
+        )
     }
 
     pub fn remove_file(&mut self, access: &FsAccess, path: &VirtualPath) -> Result<(), FsError> {
@@ -315,7 +349,12 @@ impl VirtualFS {
         Ok(())
     }
 
-    pub fn remove_dir(&mut self, access: &FsAccess, path: &VirtualPath, recursive: bool) -> Result<(), FsError> {
+    pub fn remove_dir(
+        &mut self,
+        access: &FsAccess,
+        path: &VirtualPath,
+        recursive: bool,
+    ) -> Result<(), FsError> {
         let (parent_path, name) = self.split_parent(path)?;
         let resolved_parent = self.resolve_path(access, &parent_path, true)?;
         let parent = self.get_mut(&resolved_parent)?;
@@ -336,7 +375,12 @@ impl VirtualFS {
         Ok(())
     }
 
-    pub fn rename(&mut self, access: &FsAccess, from: &VirtualPath, to: &VirtualPath) -> Result<(), FsError> {
+    pub fn rename(
+        &mut self,
+        access: &FsAccess,
+        from: &VirtualPath,
+        to: &VirtualPath,
+    ) -> Result<(), FsError> {
         let (from_parent_path, from_name) = self.split_parent(from)?;
         let resolved_from_parent = self.resolve_path(access, &from_parent_path, true)?;
 
@@ -384,12 +428,22 @@ impl VirtualFS {
         Ok(())
     }
 
-    pub fn copy_file(&mut self, access: &FsAccess, from: &VirtualPath, to: &VirtualPath) -> Result<(), FsError> {
+    pub fn copy_file(
+        &mut self,
+        access: &FsAccess,
+        from: &VirtualPath,
+        to: &VirtualPath,
+    ) -> Result<(), FsError> {
         let contents = self.read_file(access, from)?;
         self.create_file(access, to, &contents)
     }
 
-    pub fn chmod(&mut self, access: &FsAccess, path: &VirtualPath, mode: Mode) -> Result<(), FsError> {
+    pub fn chmod(
+        &mut self,
+        access: &FsAccess,
+        path: &VirtualPath,
+        mode: Mode,
+    ) -> Result<(), FsError> {
         let resolved = self.resolve_path(access, path, true)?;
         let node = self.get_mut(&resolved)?;
         if !access.is_superuser && access.uid != node.metadata.owner_uid {
@@ -400,7 +454,13 @@ impl VirtualFS {
         Ok(())
     }
 
-    pub fn chown(&mut self, access: &FsAccess, path: &VirtualPath, owner_uid: u32, group_gid: u32) -> Result<(), FsError> {
+    pub fn chown(
+        &mut self,
+        access: &FsAccess,
+        path: &VirtualPath,
+        owner_uid: u32,
+        group_gid: u32,
+    ) -> Result<(), FsError> {
         if !access.is_superuser {
             return Err(FsError::PermissionDenied(path.to_string()));
         }
@@ -418,8 +478,8 @@ impl VirtualFS {
         let p = |s: &str| VirtualPath::resolve(&VirtualPath::root(), s).unwrap();
 
         for dir in [
-            "bin", "boot", "dev", "etc", "home", "lib", "opt", "proc", "root", "run", "tmp",
-            "usr", "var",
+            "bin", "boot", "dev", "etc", "home", "lib", "opt", "proc", "root", "run", "tmp", "usr",
+            "var",
         ] {
             self.mkdir(&root_access, &p(dir)).unwrap();
         }
@@ -438,7 +498,8 @@ impl VirtualFS {
             self.mkdir(&root_access, &p(dir)).unwrap();
         }
 
-        self.write_file(&root_access, &p("etc/hostname"), b"web01\n").unwrap();
+        self.write_file(&root_access, &p("etc/hostname"), b"web01\n")
+            .unwrap();
         self.write_file(&root_access, &p("etc/hosts"), b"127.0.0.1\tlocalhost\n")
             .unwrap();
         self.write_file(
@@ -446,35 +507,46 @@ impl VirtualFS {
             &p("etc/passwd"),
             b"root:x:0:0:root:/root:/bin/bash\nguest:x:1001:1001:guest:/home/guest:/bin/bash\n",
         )
-            .unwrap();
+        .unwrap();
         self.write_file(
             &root_access,
             &p("etc/shadow"),
             b"root:!:19700:0:99999:7:::\nguest:!:19700:0:99999:7:::\n",
         )
+        .unwrap();
+        self.chmod(&root_access, &p("etc/shadow"), Mode::new(0o600))
             .unwrap();
-        self.chmod(&root_access, &p("etc/shadow"), Mode::new(0o600)).unwrap();
 
         self.write_file(&root_access, &p("etc/sudoers"), b"root ALL=(ALL:ALL) ALL\n")
             .unwrap();
-        self.chmod(&root_access, &p("etc/sudoers"), Mode::new(0o440)).unwrap();
-
-        self.write_file(&root_access, &p("etc/agpkg/repos.conf"), b"# AGPKG repositories\n")
+        self.chmod(&root_access, &p("etc/sudoers"), Mode::new(0o440))
             .unwrap();
+
+        self.write_file(
+            &root_access,
+            &p("etc/agpkg/repos.conf"),
+            b"# AGPKG repositories\n",
+        )
+        .unwrap();
         self.write_file(&root_access, &p("etc/os-release"), OS_RELEASE.as_bytes())
             .unwrap();
 
-        self.chown(&root_access, &p("home/guest"), GUEST_UID, GUEST_GID).unwrap();
-        self.chmod(&root_access, &p("home/guest"), Mode::new(0o700)).unwrap();
+        self.chown(&root_access, &p("home/guest"), GUEST_UID, GUEST_GID)
+            .unwrap();
+        self.chmod(&root_access, &p("home/guest"), Mode::new(0o700))
+            .unwrap();
 
-        self.chown(&root_access, &p("root"), ROOT_UID, ROOT_GID).unwrap();
-        self.chmod(&root_access, &p("root"), Mode::new(0o700)).unwrap();
+        self.chown(&root_access, &p("root"), ROOT_UID, ROOT_GID)
+            .unwrap();
+        self.chmod(&root_access, &p("root"), Mode::new(0o700))
+            .unwrap();
 
         // World-writable so any user can drop scratch files there, matching
         // real /tmp. We don't model the sticky bit yet (Mode is 9 bits, no
         // "only the owner may delete their own file here" protection) — fine
         // for now, worth revisiting if that distinction ever matters for gameplay.
-        self.chmod(&root_access, &p("tmp"), Mode::new(0o777)).unwrap();
+        self.chmod(&root_access, &p("tmp"), Mode::new(0o777))
+            .unwrap();
     }
 }
 
@@ -524,7 +596,11 @@ mod tests {
         let mut fs = VirtualFS::new();
         fs.mkdir(&root(), &path("/tmp/project")).unwrap();
         let entries = fs.list_dir(&root(), &path("/tmp")).unwrap();
-        assert!(entries.iter().any(|e| e.name == "project" && e.node_type == 'd'));
+        assert!(
+            entries
+                .iter()
+                .any(|e| e.name == "project" && e.node_type == 'd')
+        );
     }
 
     #[test]
@@ -538,8 +614,12 @@ mod tests {
     #[test]
     fn write_then_read_file() {
         let mut fs = VirtualFS::new();
-        fs.write_file(&root(), &path("/tmp/note.txt"), b"hello").unwrap();
-        assert_eq!(fs.read_file(&root(), &path("/tmp/note.txt")).unwrap(), b"hello");
+        fs.write_file(&root(), &path("/tmp/note.txt"), b"hello")
+            .unwrap();
+        assert_eq!(
+            fs.read_file(&root(), &path("/tmp/note.txt")).unwrap(),
+            b"hello"
+        );
     }
 
     #[test]
@@ -547,17 +627,24 @@ mod tests {
         let mut fs = VirtualFS::new();
         fs.touch(&root(), &path("/tmp/empty")).unwrap();
         assert_eq!(fs.read_file(&root(), &path("/tmp/empty")).unwrap(), b"");
-        let before = fs.metadata(&root(), &path("/tmp/empty")).unwrap().modified_at;
+        let before = fs
+            .metadata(&root(), &path("/tmp/empty"))
+            .unwrap()
+            .modified_at;
         std::thread::sleep(std::time::Duration::from_millis(5));
         fs.touch(&root(), &path("/tmp/empty")).unwrap();
-        let after = fs.metadata(&root(), &path("/tmp/empty")).unwrap().modified_at;
+        let after = fs
+            .metadata(&root(), &path("/tmp/empty"))
+            .unwrap()
+            .modified_at;
         assert!(after > before);
     }
 
     #[test]
     fn ownership_is_set_from_access() {
         let mut fs = VirtualFS::new();
-        fs.write_file(&guest(), &path("/home/guest/note.txt"), b"hi").unwrap();
+        fs.write_file(&guest(), &path("/home/guest/note.txt"), b"hi")
+            .unwrap();
         let meta = fs.metadata(&root(), &path("/home/guest/note.txt")).unwrap();
         assert_eq!(meta.owner_uid, GUEST_UID);
         assert_eq!(meta.group_gid, GUEST_GID);
@@ -591,22 +678,28 @@ mod tests {
     #[test]
     fn guest_cannot_write_outside_home() {
         let mut fs = VirtualFS::new();
-        let err = fs.write_file(&guest(), &path("/etc/hosts"), b"evil").unwrap_err();
+        let err = fs
+            .write_file(&guest(), &path("/etc/hosts"), b"evil")
+            .unwrap_err();
         assert!(matches!(err, FsError::PermissionDenied(_)));
     }
 
     #[test]
     fn guest_cannot_enter_root_home() {
         let mut fs = VirtualFS::new();
-        fs.write_file(&root(), &path("/root/secret.txt"), b"top secret").unwrap();
-        let err = fs.read_file(&guest(), &path("/root/secret.txt")).unwrap_err();
+        fs.write_file(&root(), &path("/root/secret.txt"), b"top secret")
+            .unwrap();
+        let err = fs
+            .read_file(&guest(), &path("/root/secret.txt"))
+            .unwrap_err();
         assert!(matches!(err, FsError::PermissionDenied(_)));
     }
 
     #[test]
     fn chmod_only_owner_or_root() {
         let mut fs = VirtualFS::new();
-        fs.write_file(&guest(), &path("/home/guest/note.txt"), b"hi").unwrap();
+        fs.write_file(&guest(), &path("/home/guest/note.txt"), b"hi")
+            .unwrap();
         let intruder = FsAccess::new(9999, vec![9999]);
         let err = fs
             .chmod(&intruder, &path("/home/guest/note.txt"), Mode::new(0o777))
@@ -619,16 +712,25 @@ mod tests {
     #[test]
     fn symlink_resolves_to_target() {
         let mut fs = VirtualFS::new();
-        fs.write_file(&root(), &path("/etc/real.conf"), b"data").unwrap();
-        fs.symlink(&root(), "/etc/real.conf", &path("/etc/alias.conf")).unwrap();
-        assert_eq!(fs.read_file(&root(), &path("/etc/alias.conf")).unwrap(), b"data");
+        fs.write_file(&root(), &path("/etc/real.conf"), b"data")
+            .unwrap();
+        fs.symlink(&root(), "/etc/real.conf", &path("/etc/alias.conf"))
+            .unwrap();
+        assert_eq!(
+            fs.read_file(&root(), &path("/etc/alias.conf")).unwrap(),
+            b"data"
+        );
     }
 
     #[test]
     fn readlink_returns_target_without_following() {
         let mut fs = VirtualFS::new();
-        fs.symlink(&root(), "/etc/hostname", &path("/etc/alias")).unwrap();
-        assert_eq!(fs.read_link(&root(), &path("/etc/alias")).unwrap(), "/etc/hostname");
+        fs.symlink(&root(), "/etc/hostname", &path("/etc/alias"))
+            .unwrap();
+        assert_eq!(
+            fs.read_link(&root(), &path("/etc/alias")).unwrap(),
+            "/etc/hostname"
+        );
     }
 
     #[test]
@@ -643,17 +745,26 @@ mod tests {
     #[test]
     fn copy_file_duplicates_contents() {
         let mut fs = VirtualFS::new();
-        fs.write_file(&root(), &path("/tmp/src.txt"), b"payload").unwrap();
-        fs.copy_file(&root(), &path("/tmp/src.txt"), &path("/tmp/dst.txt")).unwrap();
-        assert_eq!(fs.read_file(&root(), &path("/tmp/dst.txt")).unwrap(), b"payload");
-        assert_eq!(fs.read_file(&root(), &path("/tmp/src.txt")).unwrap(), b"payload");
+        fs.write_file(&root(), &path("/tmp/src.txt"), b"payload")
+            .unwrap();
+        fs.copy_file(&root(), &path("/tmp/src.txt"), &path("/tmp/dst.txt"))
+            .unwrap();
+        assert_eq!(
+            fs.read_file(&root(), &path("/tmp/dst.txt")).unwrap(),
+            b"payload"
+        );
+        assert_eq!(
+            fs.read_file(&root(), &path("/tmp/src.txt")).unwrap(),
+            b"payload"
+        );
     }
 
     #[test]
     fn rename_moves_node_between_directories() {
         let mut fs = VirtualFS::new();
         fs.mkdir(&root(), &path("/tmp/dest")).unwrap();
-        fs.write_file(&root(), &path("/tmp/src.txt"), b"payload").unwrap();
+        fs.write_file(&root(), &path("/tmp/src.txt"), b"payload")
+            .unwrap();
         fs.rename(&root(), &path("/tmp/src.txt"), &path("/tmp/dest/moved.txt"))
             .unwrap();
         assert!(fs.read_file(&root(), &path("/tmp/src.txt")).is_err());
@@ -666,7 +777,8 @@ mod tests {
     #[test]
     fn remove_file_deletes_entry() {
         let mut fs = VirtualFS::new();
-        fs.write_file(&root(), &path("/tmp/gone.txt"), b"x").unwrap();
+        fs.write_file(&root(), &path("/tmp/gone.txt"), b"x")
+            .unwrap();
         fs.remove_file(&root(), &path("/tmp/gone.txt")).unwrap();
         assert!(matches!(
             fs.read_file(&root(), &path("/tmp/gone.txt")).unwrap_err(),
@@ -678,9 +790,12 @@ mod tests {
     fn remove_dir_requires_empty_unless_recursive() {
         let mut fs = VirtualFS::new();
         fs.mkdir(&root(), &path("/tmp/dir")).unwrap();
-        fs.write_file(&root(), &path("/tmp/dir/file.txt"), b"x").unwrap();
+        fs.write_file(&root(), &path("/tmp/dir/file.txt"), b"x")
+            .unwrap();
 
-        let err = fs.remove_dir(&root(), &path("/tmp/dir"), false).unwrap_err();
+        let err = fs
+            .remove_dir(&root(), &path("/tmp/dir"), false)
+            .unwrap_err();
         assert!(matches!(err, FsError::NotEmpty(_)));
 
         fs.remove_dir(&root(), &path("/tmp/dir"), true).unwrap();
@@ -693,7 +808,8 @@ mod tests {
     #[test]
     fn cannot_read_file_as_directory() {
         let mut fs = VirtualFS::new();
-        fs.write_file(&root(), &path("/tmp/file.txt"), b"x").unwrap();
+        fs.write_file(&root(), &path("/tmp/file.txt"), b"x")
+            .unwrap();
         let err = fs.list_dir(&root(), &path("/tmp/file.txt")).unwrap_err();
         assert!(matches!(err, FsError::NotADirectory(_)));
     }

@@ -14,7 +14,13 @@ pub struct Metadata {
 impl Metadata {
     pub fn new(mode: Mode, owner_uid: u32, group_gid: u32) -> Self {
         let now = SystemTime::now();
-        Metadata { mode, owner_uid, group_gid, created_at: now, modified_at: now }
+        Metadata {
+            mode,
+            owner_uid,
+            group_gid,
+            created_at: now,
+            modified_at: now,
+        }
     }
 
     pub fn touch(&mut self) {

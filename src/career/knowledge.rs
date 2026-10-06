@@ -1,4 +1,4 @@
-use std::collections::{ BTreeMap, BTreeSet };
+use std::collections::{BTreeMap, BTreeSet};
 
 /// A credential the player has actually discovered during play, and where
 /// they found it — as opposed to one merely handed over by a `Directed`
@@ -33,14 +33,30 @@ impl Knowledge {
 
     /// Also records `hostname` itself — an organization affiliation implies
     /// the hostname is known.
-    pub fn record_organization(&mut self, organization: impl Into<String>, hostname: impl Into<String>) {
+    pub fn record_organization(
+        &mut self,
+        organization: impl Into<String>,
+        hostname: impl Into<String>,
+    ) {
         let hostname = hostname.into();
         self.hostnames.insert(hostname.clone());
-        self.organizations.entry(organization.into()).or_default().insert(hostname);
+        self.organizations
+            .entry(organization.into())
+            .or_default()
+            .insert(hostname);
     }
 
-    pub fn record_credential(&mut self, username: impl Into<String>, password: impl Into<String>, found_on: impl Into<String>) {
-        self.credentials.push(DiscoveredCredential { username: username.into(), password: password.into(), found_on: found_on.into() });
+    pub fn record_credential(
+        &mut self,
+        username: impl Into<String>,
+        password: impl Into<String>,
+        found_on: impl Into<String>,
+    ) {
+        self.credentials.push(DiscoveredCredential {
+            username: username.into(),
+            password: password.into(),
+            found_on: found_on.into(),
+        });
     }
 
     pub fn knows_hostname(&self, hostname: &str) -> bool {
@@ -52,11 +68,16 @@ impl Knowledge {
     }
 
     pub fn hostnames_for_organization(&self, organization: &str) -> impl Iterator<Item = &str> {
-        self.organizations.get(organization).into_iter().flat_map(|hosts| hosts.iter().map(String::as_str))
+        self.organizations
+            .get(organization)
+            .into_iter()
+            .flat_map(|hosts| hosts.iter().map(String::as_str))
     }
 
     pub fn organizations(&self) -> impl Iterator<Item = (&str, &BTreeSet<String>)> {
-        self.organizations.iter().map(|(name, hosts)| (name.as_str(), hosts))
+        self.organizations
+            .iter()
+            .map(|(name, hosts)| (name.as_str(), hosts))
     }
 
     pub fn credentials(&self) -> &[DiscoveredCredential] {

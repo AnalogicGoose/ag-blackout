@@ -72,7 +72,10 @@ impl Contract {
             reward,
             status: ContractStatus::Available,
             objective,
-            lead: Lead::Directed { username: username.into(), password: password.into() },
+            lead: Lead::Directed {
+                username: username.into(),
+                password: password.into(),
+            },
         }
     }
 
@@ -96,7 +99,10 @@ impl Contract {
             reward,
             status: ContractStatus::Available,
             objective,
-            lead: Lead::Guided { organization: organization.into(), hint: hint.into() },
+            lead: Lead::Guided {
+                organization: organization.into(),
+                hint: hint.into(),
+            },
         }
     }
 }

@@ -61,7 +61,11 @@ mod tests {
     #[test]
     fn insert_and_lookup() {
         let mut db = InstalledDatabase::new();
-        db.insert(InstalledPackage { name: "nmap".to_string(), version: "7.94".to_string(), explicit: true });
+        db.insert(InstalledPackage {
+            name: "nmap".to_string(),
+            version: "7.94".to_string(),
+            explicit: true,
+        });
         assert!(db.is_installed("nmap"));
         assert_eq!(db.get("nmap").unwrap().version, "7.94");
     }
@@ -69,7 +73,11 @@ mod tests {
     #[test]
     fn remove_drops_the_entry() {
         let mut db = InstalledDatabase::new();
-        db.insert(InstalledPackage { name: "nmap".to_string(), version: "7.94".to_string(), explicit: true });
+        db.insert(InstalledPackage {
+            name: "nmap".to_string(),
+            version: "7.94".to_string(),
+            explicit: true,
+        });
         db.remove("nmap");
         assert!(!db.is_installed("nmap"));
     }
@@ -77,7 +85,11 @@ mod tests {
     #[test]
     fn set_version_updates_in_place() {
         let mut db = InstalledDatabase::new();
-        db.insert(InstalledPackage { name: "curl".to_string(), version: "7.0".to_string(), explicit: true });
+        db.insert(InstalledPackage {
+            name: "curl".to_string(),
+            version: "7.0".to_string(),
+            explicit: true,
+        });
         db.set_version("curl", "8.4.0".to_string());
         assert_eq!(db.get("curl").unwrap().version, "8.4.0");
     }

@@ -236,7 +236,10 @@ mod tests {
     #[test]
     fn expands_vars_unquoted_and_in_double_quotes_not_single() {
         let p = parse(r#"echo $HOME "$HOME" '$HOME'"#, &env()).unwrap();
-        assert_eq!(p.stages[0].argv, vec!["echo", "/home/guest", "/home/guest", "$HOME"]);
+        assert_eq!(
+            p.stages[0].argv,
+            vec!["echo", "/home/guest", "/home/guest", "$HOME"]
+        );
     }
 
     #[test]
@@ -276,7 +279,13 @@ mod tests {
     #[test]
     fn parses_output_append_and_input_redirection() {
         let p = parse("cmd > out.txt", &env()).unwrap();
-        assert_eq!(p.stages[0].redirections, vec![Redirection { kind: RedirectKind::Out, target: "out.txt".to_string() }]);
+        assert_eq!(
+            p.stages[0].redirections,
+            vec![Redirection {
+                kind: RedirectKind::Out,
+                target: "out.txt".to_string()
+            }]
+        );
 
         let p = parse("cmd >> out.txt", &env()).unwrap();
         assert_eq!(p.stages[0].redirections[0].kind, RedirectKind::Append);
@@ -293,21 +302,33 @@ mod tests {
 
     #[test]
     fn trailing_pipe_is_a_parse_error() {
-        assert_eq!(parse("ls |", &env()).unwrap_err(), ParseError::EmptyPipelineStage);
+        assert_eq!(
+            parse("ls |", &env()).unwrap_err(),
+            ParseError::EmptyPipelineStage
+        );
     }
 
     #[test]
     fn leading_pipe_is_a_parse_error() {
-        assert_eq!(parse("| ls", &env()).unwrap_err(), ParseError::EmptyPipelineStage);
+        assert_eq!(
+            parse("| ls", &env()).unwrap_err(),
+            ParseError::EmptyPipelineStage
+        );
     }
 
     #[test]
     fn redirection_without_target_is_a_parse_error() {
-        assert_eq!(parse("cat >", &env()).unwrap_err(), ParseError::MissingRedirectTarget);
+        assert_eq!(
+            parse("cat >", &env()).unwrap_err(),
+            ParseError::MissingRedirectTarget
+        );
     }
 
     #[test]
     fn unterminated_quote_is_a_parse_error() {
-        assert_eq!(parse("echo \"unfinished", &env()).unwrap_err(), ParseError::UnterminatedQuote);
+        assert_eq!(
+            parse("echo \"unfinished", &env()).unwrap_err(),
+            ParseError::UnterminatedQuote
+        );
     }
 }

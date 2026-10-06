@@ -68,9 +68,21 @@ impl fmt::Display for Mode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut s = String::with_capacity(9);
         for class in [AccessClass::Owner, AccessClass::Group, AccessClass::Other] {
-            s.push(if self.allows(class, AccessMode::Read) { 'r' } else { '-' });
-            s.push(if self.allows(class, AccessMode::Write) { 'w' } else { '-' });
-            s.push(if self.allows(class, AccessMode::Execute) { 'x' } else { '-' });
+            s.push(if self.allows(class, AccessMode::Read) {
+                'r'
+            } else {
+                '-'
+            });
+            s.push(if self.allows(class, AccessMode::Write) {
+                'w'
+            } else {
+                '-'
+            });
+            s.push(if self.allows(class, AccessMode::Execute) {
+                'x'
+            } else {
+                '-'
+            });
         }
         write!(f, "{s}")
     }
@@ -89,12 +101,20 @@ pub struct FsAccess {
 
 impl FsAccess {
     pub fn root() -> Self {
-        FsAccess { uid: 0, gids: vec![0], is_superuser: true }
+        FsAccess {
+            uid: 0,
+            gids: vec![0],
+            is_superuser: true,
+        }
     }
 
     pub fn new(uid: u32, gids: Vec<u32>) -> Self {
         let is_superuser = uid == 0;
-        FsAccess { uid, gids, is_superuser }
+        FsAccess {
+            uid,
+            gids,
+            is_superuser,
+        }
     }
 
     pub fn primary_gid(&self) -> u32 {

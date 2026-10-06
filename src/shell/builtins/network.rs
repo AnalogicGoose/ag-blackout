@@ -99,10 +99,21 @@ mod tests {
         let mut shell = guest_shell();
         let mut target = Device::new("target01");
         let path = VirtualPath::resolve(&VirtualPath::root(), "/home/guest/report.pdf").unwrap();
-        target.filesystem.write_file(&FsAccess::root(), &path, b"confidential").unwrap();
+        target
+            .filesystem
+            .write_file(&FsAccess::root(), &path, b"confidential")
+            .unwrap();
         shell.network.register(target);
 
-        let id = shell.contracts.post(Contract::directed("Get the report", "target01", path, 3000, "guest", "guest", crate::career::Objective::ObtainResource));
+        let id = shell.contracts.post(Contract::directed(
+            "Get the report",
+            "target01",
+            path,
+            3000,
+            "guest",
+            "guest",
+            crate::career::Objective::ObtainResource,
+        ));
         shell.execute_line(&format!("contracts accept {id}"));
         shell.execute_line("connect target01 guest guest");
 
@@ -112,7 +123,10 @@ mod tests {
         assert_eq!(shell.contracts.completed().count(), 1);
 
         shell.execute_line("disconnect");
-        assert_eq!(shell.execute_line("cat /home/guest/report.pdf").stdout, "confidential");
+        assert_eq!(
+            shell.execute_line("cat /home/guest/report.pdf").stdout,
+            "confidential"
+        );
     }
 
     #[test]
@@ -122,7 +136,10 @@ mod tests {
         let mut shell = guest_shell();
         let mut target = Device::new("target01");
         let path = VirtualPath::resolve(&VirtualPath::root(), "/home/guest/report.pdf").unwrap();
-        target.filesystem.write_file(&FsAccess::root(), &path, b"confidential").unwrap();
+        target
+            .filesystem
+            .write_file(&FsAccess::root(), &path, b"confidential")
+            .unwrap();
         shell.network.register(target);
         shell.execute_line("connect target01 guest guest");
 
@@ -131,7 +148,10 @@ mod tests {
         assert!(result.stdout.contains("/tmp/loot.pdf"));
 
         shell.execute_line("disconnect");
-        assert_eq!(shell.execute_line("cat /tmp/loot.pdf").stdout, "confidential");
+        assert_eq!(
+            shell.execute_line("cat /tmp/loot.pdf").stdout,
+            "confidential"
+        );
     }
 
     #[test]
@@ -141,7 +161,10 @@ mod tests {
         let mut shell = guest_shell();
         let mut target = Device::new("target01");
         let path = VirtualPath::resolve(&VirtualPath::root(), "/home/guest/report.pdf").unwrap();
-        target.filesystem.write_file(&FsAccess::root(), &path, b"confidential").unwrap();
+        target
+            .filesystem
+            .write_file(&FsAccess::root(), &path, b"confidential")
+            .unwrap();
         shell.network.register(target);
         shell.execute_line("connect target01 guest guest");
 
@@ -150,6 +173,9 @@ mod tests {
         assert!(result.stdout.contains("/tmp/report.pdf"));
 
         shell.execute_line("disconnect");
-        assert_eq!(shell.execute_line("cat /tmp/report.pdf").stdout, "confidential");
+        assert_eq!(
+            shell.execute_line("cat /tmp/report.pdf").stdout,
+            "confidential"
+        );
     }
 }

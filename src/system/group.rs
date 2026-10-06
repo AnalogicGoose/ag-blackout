@@ -6,6 +6,9 @@ pub struct Group {
 
 impl Group {
     pub fn new(gid: u32, name: impl Into<String>) -> Self {
-        Group { gid, name: name.into() }
+        Group {
+            gid,
+            name: name.into(),
+        }
     }
 }

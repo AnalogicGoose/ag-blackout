@@ -24,7 +24,7 @@ pub fn su(
     current: &ExecutionContext,
     target_username: &str,
     password: Option<&str>,
-    login: bool
+    login: bool,
 ) -> Result<ExecutionContext, PrivilegeError> {
     let target = db
         .user_by_name(target_username)
@@ -37,7 +37,9 @@ pub fn su(
         }
     }
 
-    let mut ctx = db.execution_context_for(target.uid).expect("target user was just looked up");
+    let mut ctx = db
+        .execution_context_for(target.uid)
+        .expect("target user was just looked up");
     if !login {
         ctx.cwd = current.cwd.clone();
     }
@@ -73,7 +75,9 @@ pub fn sudo(
         .user_by_name(target_name)
         .ok_or_else(|| PrivilegeError::UnknownUser(target_name.to_string()))?;
 
-    let mut ctx = db.execution_context_for(target.uid).expect("target user was just looked up");
+    let mut ctx = db
+        .execution_context_for(target.uid)
+        .expect("target user was just looked up");
     ctx.cwd = current.cwd.clone();
     Ok(ctx)
 }
@@ -99,7 +103,10 @@ mod tests {
             su(&db, &guest_ctx, "admin", Some("wrong"), false).unwrap_err(),
             PrivilegeError::IncorrectPassword
         );
-        assert_eq!(su(&db, &guest_ctx, "admin", None, false).unwrap_err(), PrivilegeError::IncorrectPassword);
+        assert_eq!(
+            su(&db, &guest_ctx, "admin", None, false).unwrap_err(),
+            PrivilegeError::IncorrectPassword
+        );
     }
 
     #[test]

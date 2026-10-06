@@ -11,7 +11,9 @@ pub struct VirtualPath {
 
 impl VirtualPath {
     pub fn root() -> Self {
-        VirtualPath { components: Vec::new() }
+        VirtualPath {
+            components: Vec::new(),
+        }
     }
 
     pub fn from_components(components: Vec<String>) -> Self {

@@ -47,14 +47,23 @@ pub struct ServiceRegistry {
 
 impl ServiceRegistry {
     pub fn new(processes: &mut ProcessTable) -> Self {
-        let mut registry = ServiceRegistry { services: BTreeMap::new() };
+        let mut registry = ServiceRegistry {
+            services: BTreeMap::new(),
+        };
         registry.seed_running(processes, "sshd", "sshd", 0, "9.3");
         registry.seed_running(processes, "cron", "cron", 0, "3.0pl1");
         registry.seed_running(processes, "nginx", "nginx", WWW_DATA_UID, "1.18.0");
         registry
     }
 
-    fn seed_running(&mut self, processes: &mut ProcessTable, name: &str, command: &str, owner_uid: u32, version: &str) {
+    fn seed_running(
+        &mut self,
+        processes: &mut ProcessTable,
+        name: &str,
+        command: &str,
+        owner_uid: u32,
+        version: &str,
+    ) {
         let pid = processes.spawn(1, owner_uid, command);
         self.services.insert(
             name.to_string(),
@@ -77,11 +86,19 @@ impl ServiceRegistry {
         self.services.values().collect()
     }
 
-    pub fn stop(&mut self, processes: &mut ProcessTable, is_root: bool, name: &str) -> Result<(), ServiceError> {
+    pub fn stop(
+        &mut self,
+        processes: &mut ProcessTable,
+        is_root: bool,
+        name: &str,
+    ) -> Result<(), ServiceError> {
         if !is_root {
             return Err(ServiceError::NotPermitted);
         }
-        let service = self.services.get_mut(name).ok_or_else(|| ServiceError::NotFound(name.to_string()))?;
+        let service = self
+            .services
+            .get_mut(name)
+            .ok_or_else(|| ServiceError::NotFound(name.to_string()))?;
         if service.state == ServiceState::Stopped {
             return Err(ServiceError::AlreadyStopped);
         }
@@ -92,12 +109,20 @@ impl ServiceRegistry {
         Ok(())
     }
 
-    pub fn start(&mut self, processes: &mut ProcessTable, is_root: bool, name: &str) -> Result<(), ServiceError> {
+    pub fn start(
+        &mut self,
+        processes: &mut ProcessTable,
+        is_root: bool,
+        name: &str,
+    ) -> Result<(), ServiceError> {
         if !is_root {
             return Err(ServiceError::NotPermitted);
         }
         let (owner_uid, command) = {
-            let service = self.services.get(name).ok_or_else(|| ServiceError::NotFound(name.to_string()))?;
+            let service = self
+                .services
+                .get(name)
+                .ok_or_else(|| ServiceError::NotFound(name.to_string()))?;
             if service.state == ServiceState::Running {
                 return Err(ServiceError::AlreadyRunning);
             }
@@ -128,7 +153,10 @@ mod tests {
     fn stop_requires_root() {
         let mut processes = ProcessTable::new();
         let mut registry = ServiceRegistry::new(&mut processes);
-        assert_eq!(registry.stop(&mut processes, false, "sshd").unwrap_err(), ServiceError::NotPermitted);
+        assert_eq!(
+            registry.stop(&mut processes, false, "sshd").unwrap_err(),
+            ServiceError::NotPermitted
+        );
     }
 
     #[test]
@@ -146,7 +174,10 @@ mod tests {
         let mut processes = ProcessTable::new();
         let mut registry = ServiceRegistry::new(&mut processes);
         registry.stop(&mut processes, true, "sshd").unwrap();
-        assert_eq!(registry.stop(&mut processes, true, "sshd").unwrap_err(), ServiceError::AlreadyStopped);
+        assert_eq!(
+            registry.stop(&mut processes, true, "sshd").unwrap_err(),
+            ServiceError::AlreadyStopped
+        );
     }
 
     #[test]

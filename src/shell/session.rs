@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::time::{Duration, Instant};
 
 use crate::career::{Career, ContractBoard, Economy};
 use crate::filesystem::VirtualPath;
@@ -8,6 +9,14 @@ use crate::world::{Device, Network, OrganizationRegistry};
 use super::builtins::{self, CommandFn};
 use super::output::{CommandOutput, LineResult};
 use super::parser::{self, RedirectKind, Redirection};
+
+const SUDO_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+
+struct SudoTicket {
+    hostname: String,
+    uid: u32,
+    expires_at: Instant,
+}
 
 /// A logged-in shell session. Owns the player's world (`Network`,
 /// `OrganizationRegistry`) and career state (`ContractBoard`, `Economy`,
@@ -30,6 +39,7 @@ pub struct Shell {
     active_hostname: String,
     local_context: ExecutionContext,
     builtins: HashMap<&'static str, CommandFn>,
+    sudo_ticket: Option<SudoTicket>,
 }
 
 impl Shell {
@@ -41,7 +51,9 @@ impl Shell {
         let local_context = network
             .get(&local_hostname)
             .and_then(|device| device.users.execution_context_for(initial_uid))
-            .expect("local_hostname must be registered in network and initial_uid must exist on it");
+            .expect(
+                "local_hostname must be registered in network and initial_uid must exist on it",
+            );
         Shell {
             network,
             organizations: OrganizationRegistry::new(),
@@ -53,6 +65,7 @@ impl Shell {
             local_hostname,
             local_context,
             builtins: builtins::table(),
+            sudo_ticket: None,
         }
     }
 
@@ -63,11 +76,15 @@ impl Shell {
     /// The device the session is currently attached to — local by default,
     /// whatever `connect` last targeted otherwise.
     pub fn active_device(&self) -> &Device {
-        self.network.get(&self.active_hostname).expect("active_hostname always names a registered device")
+        self.network
+            .get(&self.active_hostname)
+            .expect("active_hostname always names a registered device")
     }
 
     pub fn active_device_mut(&mut self) -> &mut Device {
-        self.network.get_mut(&self.active_hostname).expect("active_hostname always names a registered device")
+        self.network
+            .get_mut(&self.active_hostname)
+            .expect("active_hostname always names a registered device")
     }
 
     /// If the active device has a `CredentialLead` at exactly `path`, records
@@ -77,9 +94,18 @@ impl Shell {
     /// docs/GAME_DESIGN.md's Slice 2 section.
     pub fn note_credential_leads_at(&mut self, path: &VirtualPath) {
         let host = self.active_hostname.clone();
-        let Some(lead) = self.active_device().credential_leads.iter().find(|lead| &lead.path == path) else { return };
+        let Some(lead) = self
+            .active_device()
+            .credential_leads
+            .iter()
+            .find(|lead| &lead.path == path)
+        else {
+            return;
+        };
         let (username, password) = (lead.username.clone(), lead.password.clone());
-        self.career.knowledge.record_credential(username, password, host);
+        self.career
+            .knowledge
+            .record_credential(username, password, host);
     }
 
     pub fn is_connected_remotely(&self) -> bool {
@@ -93,10 +119,25 @@ impl Shell {
     /// `connect`'s actual logic, callable directly by the builtin. Looks the
     /// host up on the network, authenticates against *its* user database,
     /// and — on success — switches the session's active device and identity.
-    pub fn connect(&mut self, hostname: &str, username: &str, password: &str) -> Result<(), String> {
-        let device = self.network.get(hostname).ok_or_else(|| format!("{hostname}: no route to host"))?;
-        let uid = device.users.authenticate(username, password).ok_or_else(|| format!("{hostname}: authentication failed"))?;
-        let ctx = device.users.execution_context_for(uid).expect("authenticate just confirmed this uid exists");
+    pub fn connect(
+        &mut self,
+        hostname: &str,
+        username: &str,
+        password: &str,
+    ) -> Result<(), String> {
+        let device = self
+            .network
+            .get(hostname)
+            .ok_or_else(|| format!("{hostname}: no route to host"))?;
+        let uid = device
+            .users
+            .authenticate(username, password)
+            .ok_or_else(|| format!("{hostname}: authentication failed"))?;
+        let ctx = device
+            .users
+            .execution_context_for(uid)
+            .expect("authenticate just confirmed this uid exists");
+        self.clear_sudo_cache();
         self.active_hostname = hostname.to_string();
         self.context = ctx;
         Ok(())
@@ -107,6 +148,7 @@ impl Shell {
         if !self.is_connected_remotely() {
             return Err("not connected to a remote host".to_string());
         }
+        self.clear_sudo_cache();
         self.active_hostname = self.local_hostname.clone();
         self.context = self.local_context.clone();
         Ok(())
@@ -130,7 +172,11 @@ impl Shell {
     /// resource" means for a contract now (see docs/GAME_DESIGN.md):
     /// proof-of-access alone no longer pays out, the file has to actually
     /// make it home.
-    pub fn download(&mut self, remote_path: &VirtualPath, local_path: Option<&VirtualPath>) -> Result<VirtualPath, String> {
+    pub fn download(
+        &mut self,
+        remote_path: &VirtualPath,
+        local_path: Option<&VirtualPath>,
+    ) -> Result<VirtualPath, String> {
         if !self.is_connected_remotely() {
             return Err("not connected to a remote host".to_string());
         }
@@ -145,7 +191,10 @@ impl Shell {
         let local_access = self.local_context.fs_access();
         let local_path = match local_path {
             Some(p) => {
-                let is_dir = self.network.get(&self.local_hostname).expect("local_hostname always names a registered device")
+                let is_dir = self
+                    .network
+                    .get(&self.local_hostname)
+                    .expect("local_hostname always names a registered device")
                     .filesystem
                     .is_dir(&local_access, p)
                     .unwrap_or(false);
@@ -162,7 +211,12 @@ impl Shell {
                 let filename = remote_path
                     .file_name()
                     .ok_or_else(|| format!("{remote_path}: no filename to save"))?;
-                let home = self.local_context.env.get("HOME").expect("every context has HOME").clone();
+                let home = self
+                    .local_context
+                    .env
+                    .get("HOME")
+                    .expect("every context has HOME")
+                    .clone();
                 VirtualPath::resolve(&VirtualPath::root(), &home)
                     .expect("HOME is always a valid absolute path")
                     .join(filename)
@@ -187,7 +241,13 @@ impl Shell {
     pub fn execute_line(&mut self, input: &str) -> LineResult {
         let pipeline = match parser::parse(input, &self.context.env) {
             Ok(p) => p,
-            Err(e) => return LineResult { stdout: String::new(), stderr: format!("ag-shell: {e}\n"), exit_code: 2 },
+            Err(e) => {
+                return LineResult {
+                    stdout: String::new(),
+                    stderr: format!("ag-shell: {e}\n"),
+                    exit_code: 2,
+                };
+            }
         };
         if pipeline.stages.is_empty() {
             return LineResult::default();
@@ -198,11 +258,19 @@ impl Shell {
         let mut last = CommandOutput::empty_ok();
 
         for stage in &pipeline.stages {
-            let stage_stdin = match stage.redirections.iter().find(|r| r.kind == RedirectKind::In) {
+            let stage_stdin = match stage
+                .redirections
+                .iter()
+                .find(|r| r.kind == RedirectKind::In)
+            {
                 Some(redir) => {
                     let path = self.resolve(&redir.target);
                     let access = self.context.fs_access();
-                    match self.active_device_mut().filesystem.read_file(&access, &path) {
+                    match self
+                        .active_device_mut()
+                        .filesystem
+                        .read_file(&access, &path)
+                    {
                         Ok(bytes) => Some(String::from_utf8_lossy(&bytes).into_owned()),
                         Err(e) => {
                             stderr_acc.push_str(&format!("ag-shell: {}: {e}\n", redir.target));
@@ -216,8 +284,11 @@ impl Shell {
             let output = self.run_command(&stage.argv, stage_stdin.as_deref());
             stderr_acc.push_str(&output.stderr);
 
-            let out_redirs: Vec<&Redirection> =
-                stage.redirections.iter().filter(|r| r.kind != RedirectKind::In).collect();
+            let out_redirs: Vec<&Redirection> = stage
+                .redirections
+                .iter()
+                .filter(|r| r.kind != RedirectKind::In)
+                .collect();
 
             if out_redirs.is_empty() {
                 stdin = Some(output.stdout.clone());
@@ -226,25 +297,41 @@ impl Shell {
                 for redir in &out_redirs {
                     self.write_redirect(redir, &output.stdout, &mut stderr_acc);
                 }
-                last = CommandOutput { stdout: String::new(), stderr: String::new(), exit_code: output.exit_code };
+                last = CommandOutput {
+                    stdout: String::new(),
+                    stderr: String::new(),
+                    exit_code: output.exit_code,
+                };
                 stdin = Some(String::new());
             }
         }
 
-        LineResult { stdout: last.stdout, stderr: stderr_acc, exit_code: last.exit_code }
+        LineResult {
+            stdout: last.stdout,
+            stderr: stderr_acc,
+            exit_code: last.exit_code,
+        }
     }
 
     fn write_redirect(&mut self, redir: &Redirection, stdout: &str, stderr_acc: &mut String) {
         let path = self.resolve(&redir.target);
         let access = self.context.fs_access();
         let bytes = if redir.kind == RedirectKind::Append {
-            let mut existing = self.active_device_mut().filesystem.read_file(&access, &path).unwrap_or_default();
+            let mut existing = self
+                .active_device_mut()
+                .filesystem
+                .read_file(&access, &path)
+                .unwrap_or_default();
             existing.extend_from_slice(stdout.as_bytes());
             existing
         } else {
             stdout.as_bytes().to_vec()
         };
-        match self.active_device_mut().filesystem.write_file(&access, &path, &bytes) {
+        match self
+            .active_device_mut()
+            .filesystem
+            .write_file(&access, &path, &bytes)
+        {
             Ok(()) => {
                 // A `ModifyResource` contract is satisfied by overwriting its
                 // resource with the required bytes — see docs/GAME_DESIGN.md.
@@ -262,7 +349,9 @@ impl Shell {
     }
 
     fn run_command(&mut self, argv: &[String], stdin: Option<&str>) -> CommandOutput {
-        let Some(name) = argv.first() else { return CommandOutput::empty_ok() };
+        let Some(name) = argv.first() else {
+            return CommandOutput::empty_ok();
+        };
         let Some(f) = self.builtins.get(name.as_str()).copied() else {
             return CommandOutput::error(format!("ag-shell: {name}: command not found\n"));
         };
@@ -292,7 +381,7 @@ impl Shell {
                     stdout: String::new(),
                     stderr: format!("sudo: {error}\n"),
                     exit_code: 2,
-                }
+                };
             }
         };
 
@@ -313,47 +402,142 @@ impl Shell {
             };
         }
 
-        let command = &argv[1..];
-        if matches!(
-            command[0].as_str(),
-            "connect" | "disconnect" | "su" | "sudo"
-        ) {
-            return LineResult {
-                stdout: String::new(),
-                stderr: format!("sudo: cannot run {}\n", command[0]),
-                exit_code: 1,
-            };
-        }
-
-        let context = match crate::system::sudo(
-            &self.active_device().users,
-            &self.active_device().sudoers,
-            &self.context,
-            password,
-            None,
-        ) {
-            Ok(context) => context,
-            Err(error) => {
-                return LineResult {
-                    stdout: String::new(),
-                    stderr: format!("sudo: {error}\n"),
-                    exit_code: 1,
-                };
-            }
-        };
-
-        let output = self.run_as(context, command, None);
+        let output = self.run_sudo_command(&argv[1..], Some(password), None);
         LineResult {
             stdout: output.stdout,
             stderr: output.stderr,
             exit_code: output.exit_code,
         }
     }
+
+    pub fn sudo_is_cached(&self) -> bool {
+        self.sudo_ticket.as_ref().is_some_and(|ticket| {
+            ticket.hostname == self.active_hostname
+                && ticket.uid == self.context.uid
+                && Instant::now() < ticket.expires_at
+        })
+    }
+
+    pub(crate) fn clear_sudo_cache(&mut self) {
+        self.sudo_ticket = None;
+    }
+
+    pub(crate) fn run_sudo_command(
+        &mut self,
+        command: &[String],
+        password: Option<&str>,
+        stdin: Option<&str>,
+    ) -> CommandOutput {
+        let Some(name) = command.first() else {
+            return CommandOutput::error("sudo: usage: sudo <command> [args...]\n");
+        };
+
+        if matches!(name.as_str(), "connect" | "disconnect" | "su" | "sudo") {
+            return CommandOutput::error(format!("sudo: cannot run {name}\n"));
+        }
+
+        let device = self.active_device();
+        if !device.sudoers.permits(&device.users, self.context.uid) {
+            let user = device.users.whoami(self.context.uid).unwrap_or("unknown");
+            return CommandOutput::error(format!("sudo: {user} is not in the sudoers file.\n"));
+        }
+
+        let context = if self.sudo_is_cached() {
+            let mut context = self
+                .active_device()
+                .users
+                .execution_context_for(0)
+                .expect("root must exist on the active device");
+            context.cwd = self.context.cwd.clone();
+            context
+        } else {
+            let Some(password) = password else {
+                return CommandOutput::error("sudo: interactive password prompt required\n");
+            };
+            match crate::system::sudo(
+                &self.active_device().users,
+                &self.active_device().sudoers,
+                &self.context,
+                password,
+                None,
+            ) {
+                Ok(context) => context,
+                Err(error) => return CommandOutput::error(format!("sudo: {error}\n")),
+            }
+        };
+
+        // Refrescar el plazo incluso si el comando termina con error:
+        // la autenticación sudo ya fue válida.
+        self.sudo_ticket = Some(SudoTicket {
+            hostname: self.active_hostname.clone(),
+            uid: self.context.uid,
+            expires_at: Instant::now() + SUDO_TIMEOUT,
+        });
+
+        self.run_as(context, command, stdin)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::super::test_support::guest_shell;
+    use super::*;
+    use crate::world::Device;
+
+    #[test]
+    fn sudo_cache_expires_without_sleeping() {
+        let mut shell = guest_shell();
+        shell.execute_line("su admin admin123");
+
+        assert_ne!(shell.execute_sudo("sudo whoami", "wrong").exit_code, 0);
+        assert!(!shell.sudo_is_cached());
+        assert_eq!(
+            shell.execute_sudo("sudo whoami", "admin123").stdout.trim(),
+            "root"
+        );
+        assert!(shell.sudo_is_cached());
+        shell.sudo_ticket.as_mut().unwrap().expires_at = Instant::now() + Duration::from_secs(1);
+        let old_deadline = shell.sudo_ticket.as_ref().unwrap().expires_at;
+        assert_eq!(shell.execute_line("sudo whoami").stdout.trim(), "root");
+        assert!(shell.sudo_ticket.as_ref().unwrap().expires_at > old_deadline);
+        assert_eq!(shell.execute_line("whoami").stdout.trim(), "admin");
+
+        shell.sudo_ticket.as_mut().unwrap().expires_at = Instant::now() - Duration::from_secs(1);
+        assert!(!shell.sudo_is_cached());
+        assert!(
+            shell
+                .execute_line("sudo whoami")
+                .stderr
+                .contains("interactive password prompt required")
+        );
+        assert_eq!(
+            shell.execute_sudo("sudo whoami", "admin123").stdout.trim(),
+            "root"
+        );
+    }
+
+    #[test]
+    fn successful_session_switches_clear_sudo_cache() {
+        let mut shell = guest_shell();
+        shell.network.register(Device::new("target01"));
+        shell.execute_line("su admin admin123");
+        shell.execute_sudo("sudo whoami", "admin123");
+        assert!(shell.sudo_is_cached());
+
+        // Even switching back to the same uid must invalidate the old ticket.
+        assert_eq!(shell.execute_line("su admin admin123").exit_code, 0);
+        assert!(!shell.sudo_is_cached());
+        shell.execute_sudo("sudo whoami", "admin123");
+
+        assert!(shell.connect("target01", "admin", "admin123").is_ok());
+        assert!(!shell.sudo_is_cached());
+        shell.execute_sudo("sudo whoami", "admin123");
+        assert!(shell.sudo_is_cached());
+
+        assert!(shell.disconnect().is_ok());
+        assert!(!shell.sudo_is_cached());
+        assert_eq!(shell.execute_line("whoami").stdout.trim(), "guest");
+    }
 
     #[test]
     fn unknown_command_reports_not_found() {
@@ -384,7 +568,12 @@ mod tests {
         let mut shell = guest_shell();
         // mkdir --help must not actually create anything.
         shell.execute_line("mkdir --help /home/guest/should-not-exist");
-        assert_eq!(shell.execute_line("cd /home/guest/should-not-exist").exit_code, 1);
+        assert_eq!(
+            shell
+                .execute_line("cd /home/guest/should-not-exist")
+                .exit_code,
+            1
+        );
     }
 
     #[test]
@@ -408,7 +597,10 @@ mod tests {
         let mut shell = guest_shell();
         shell.execute_line("echo one > /home/guest/log.txt");
         shell.execute_line("echo two >> /home/guest/log.txt");
-        assert_eq!(shell.execute_line("cat /home/guest/log.txt").stdout, "one\ntwo\n");
+        assert_eq!(
+            shell.execute_line("cat /home/guest/log.txt").stdout,
+            "one\ntwo\n"
+        );
     }
 
     #[test]
@@ -435,7 +627,9 @@ mod tests {
     #[test]
     fn connect_switches_active_device_and_identity() {
         let mut shell = guest_shell();
-        shell.network.register(crate::world::Device::new("target01"));
+        shell
+            .network
+            .register(crate::world::Device::new("target01"));
         shell.connect("target01", "guest", "guest").unwrap();
         assert!(shell.is_connected_remotely());
         assert_eq!(shell.execute_line("whoami").stdout, "guest\n");
@@ -444,7 +638,9 @@ mod tests {
     #[test]
     fn connect_with_wrong_password_fails() {
         let mut shell = guest_shell();
-        shell.network.register(crate::world::Device::new("target01"));
+        shell
+            .network
+            .register(crate::world::Device::new("target01"));
         assert!(shell.connect("target01", "guest", "wrong").is_err());
         assert!(!shell.is_connected_remotely());
     }
@@ -452,7 +648,9 @@ mod tests {
     #[test]
     fn disconnect_restores_local_identity_and_cwd() {
         let mut shell = guest_shell();
-        shell.network.register(crate::world::Device::new("target01"));
+        shell
+            .network
+            .register(crate::world::Device::new("target01"));
         shell.connect("target01", "guest", "guest").unwrap();
         shell.execute_line("cd /tmp");
         shell.disconnect().unwrap();
@@ -469,7 +667,11 @@ mod tests {
     #[test]
     fn download_requires_being_connected_remotely() {
         let mut shell = guest_shell();
-        let path = crate::filesystem::VirtualPath::resolve(&crate::filesystem::VirtualPath::root(), "/home/guest/x.txt").unwrap();
+        let path = crate::filesystem::VirtualPath::resolve(
+            &crate::filesystem::VirtualPath::root(),
+            "/home/guest/x.txt",
+        )
+        .unwrap();
         assert!(shell.download(&path, None).is_err());
     }
 
@@ -480,11 +682,23 @@ mod tests {
 
         let mut shell = guest_shell();
         let mut target = crate::world::Device::new("target01");
-        let remote_path = VirtualPath::resolve(&VirtualPath::root(), "/home/guest/report.pdf").unwrap();
-        target.filesystem.write_file(&FsAccess::root(), &remote_path, b"confidential").unwrap();
+        let remote_path =
+            VirtualPath::resolve(&VirtualPath::root(), "/home/guest/report.pdf").unwrap();
+        target
+            .filesystem
+            .write_file(&FsAccess::root(), &remote_path, b"confidential")
+            .unwrap();
         shell.network.register(target);
 
-        let id = shell.contracts.post(Contract::directed("Get the report", "target01", remote_path.clone(), 3000, "guest", "guest", crate::career::Objective::ObtainResource));
+        let id = shell.contracts.post(Contract::directed(
+            "Get the report",
+            "target01",
+            remote_path.clone(),
+            3000,
+            "guest",
+            "guest",
+            crate::career::Objective::ObtainResource,
+        ));
         shell.contracts.accept(id).unwrap();
         shell.connect("target01", "guest", "guest").unwrap();
 
@@ -494,7 +708,10 @@ mod tests {
         assert_eq!(shell.contracts.completed().count(), 1);
 
         shell.disconnect().unwrap();
-        assert_eq!(shell.execute_line("cat /home/guest/report.pdf").stdout, "confidential");
+        assert_eq!(
+            shell.execute_line("cat /home/guest/report.pdf").stdout,
+            "confidential"
+        );
     }
 
     #[test]
@@ -503,8 +720,12 @@ mod tests {
 
         let mut shell = guest_shell();
         let mut target = crate::world::Device::new("target01");
-        let remote_path = VirtualPath::resolve(&VirtualPath::root(), "/home/guest/report.pdf").unwrap();
-        target.filesystem.write_file(&FsAccess::root(), &remote_path, b"confidential").unwrap();
+        let remote_path =
+            VirtualPath::resolve(&VirtualPath::root(), "/home/guest/report.pdf").unwrap();
+        target
+            .filesystem
+            .write_file(&FsAccess::root(), &remote_path, b"confidential")
+            .unwrap();
         shell.network.register(target);
         shell.connect("target01", "guest", "guest").unwrap();
 
@@ -513,7 +734,10 @@ mod tests {
         assert_eq!(saved, local_path);
 
         shell.disconnect().unwrap();
-        assert_eq!(shell.execute_line("cat /tmp/loot.pdf").stdout, "confidential");
+        assert_eq!(
+            shell.execute_line("cat /tmp/loot.pdf").stdout,
+            "confidential"
+        );
     }
 
     #[test]
@@ -522,8 +746,12 @@ mod tests {
 
         let mut shell = guest_shell();
         let mut target = crate::world::Device::new("target01");
-        let remote_path = VirtualPath::resolve(&VirtualPath::root(), "/home/guest/report.pdf").unwrap();
-        target.filesystem.write_file(&FsAccess::root(), &remote_path, b"confidential").unwrap();
+        let remote_path =
+            VirtualPath::resolve(&VirtualPath::root(), "/home/guest/report.pdf").unwrap();
+        target
+            .filesystem
+            .write_file(&FsAccess::root(), &remote_path, b"confidential")
+            .unwrap();
         shell.network.register(target);
         shell.connect("target01", "guest", "guest").unwrap();
 
@@ -533,6 +761,9 @@ mod tests {
         assert_eq!(saved.to_string(), "/tmp/report.pdf");
 
         shell.disconnect().unwrap();
-        assert_eq!(shell.execute_line("cat /tmp/report.pdf").stdout, "confidential");
+        assert_eq!(
+            shell.execute_line("cat /tmp/report.pdf").stdout,
+            "confidential"
+        );
     }
 }

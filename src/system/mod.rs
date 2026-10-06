@@ -11,7 +11,7 @@ pub mod user;
 pub use context::ExecutionContext;
 pub use group::Group;
 pub use log::{LogBook, LogEntry};
-pub use privilege::{su, sudo, PrivilegeError};
+pub use privilege::{PrivilegeError, su, sudo};
 pub use process::{Process, ProcessError, ProcessTable};
 pub use registry::{IdInfo, UserDatabase};
 pub use service::{Service, ServiceError, ServiceRegistry, ServiceState};

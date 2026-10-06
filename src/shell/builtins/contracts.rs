@@ -18,7 +18,9 @@ pub fn contracts(shell: &mut Shell, args: &[String], _stdin: Option<&str>) -> Co
                 Err(e) => CommandOutput::error(format!("contracts accept: {e}\n")),
             }
         }
-        Some(other) => CommandOutput::error(format!("contracts: unknown subcommand '{other}' (expected list/accept)\n")),
+        Some(other) => CommandOutput::error(format!(
+            "contracts: unknown subcommand '{other}' (expected list/accept)\n"
+        )),
     }
 }
 
@@ -29,7 +31,13 @@ fn list(shell: &Shell) -> String {
     if !available.is_empty() {
         out.push_str("Available:\n");
         for c in &available {
-            out.push_str(&format!("  [{}] {} — {} — ${}\n", c.id, c.title, briefing(c), c.reward));
+            out.push_str(&format!(
+                "  [{}] {} — {} — ${}\n",
+                c.id,
+                c.title,
+                briefing(c),
+                c.reward
+            ));
         }
     }
 
@@ -61,7 +69,9 @@ fn list(shell: &Shell) -> String {
 /// to discover it themselves. See docs/GAME_DESIGN.md's Slice 2 section.
 fn briefing(c: &Contract) -> String {
     match &c.lead {
-        Lead::Directed { username, password } => format!("{} — login: {username}/{password}", c.target_hostname),
+        Lead::Directed { username, password } => {
+            format!("{} — login: {username}/{password}", c.target_hostname)
+        }
         Lead::Guided { organization, hint } => format!("org: {organization} — hint: {hint}"),
     }
 }
@@ -75,11 +85,20 @@ mod tests {
 
     fn with_one_posted_job(shell: &mut Shell) -> u32 {
         let path = VirtualPath::resolve(&VirtualPath::root(), "/home/finance/report.pdf").unwrap();
-        shell.contracts.post(Contract::directed("Get the report", "target01", path, 3000, "guest", "guest", Objective::ObtainResource))
+        shell.contracts.post(Contract::directed(
+            "Get the report",
+            "target01",
+            path,
+            3000,
+            "guest",
+            "guest",
+            Objective::ObtainResource,
+        ))
     }
 
     fn with_one_guided_job(shell: &mut Shell) -> u32 {
-        let path = VirtualPath::resolve(&VirtualPath::root(), "/home/analyst/customers.csv").unwrap();
+        let path =
+            VirtualPath::resolve(&VirtualPath::root(), "/home/analyst/customers.csv").unwrap();
         shell.contracts.post(Contract::guided(
             "Obtain the customer database",
             "corp-db01",

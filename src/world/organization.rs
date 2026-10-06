@@ -14,7 +14,11 @@ pub struct Organization {
 
 impl Organization {
     pub fn new(name: impl Into<String>, blurb: impl Into<String>, hostnames: Vec<String>) -> Self {
-        Organization { name: name.into(), blurb: blurb.into(), hostnames }
+        Organization {
+            name: name.into(),
+            blurb: blurb.into(),
+            hostnames,
+        }
     }
 
     pub fn owns(&self, hostname: &str) -> bool {
@@ -37,7 +41,8 @@ impl OrganizationRegistry {
     }
 
     pub fn register(&mut self, organization: Organization) {
-        self.organizations.insert(organization.name.clone(), organization);
+        self.organizations
+            .insert(organization.name.clone(), organization);
     }
 
     pub fn get(&self, name: &str) -> Option<&Organization> {
@@ -51,7 +56,11 @@ mod tests {
 
     #[test]
     fn owns_checks_membership() {
-        let org = Organization::new("Meridian Analytics", "A data firm.", vec!["corp-web01".to_string()]);
+        let org = Organization::new(
+            "Meridian Analytics",
+            "A data firm.",
+            vec!["corp-web01".to_string()],
+        );
         assert!(org.owns("corp-web01"));
         assert!(!org.owns("corp-db01"));
     }
@@ -59,7 +68,11 @@ mod tests {
     #[test]
     fn registry_looks_up_by_name() {
         let mut registry = OrganizationRegistry::new();
-        registry.register(Organization::new("Meridian Analytics", "A data firm.", vec!["corp-web01".to_string()]));
+        registry.register(Organization::new(
+            "Meridian Analytics",
+            "A data firm.",
+            vec!["corp-web01".to_string()],
+        ));
         assert!(registry.get("Meridian Analytics").is_some());
         assert!(registry.get("Nope Corp").is_none());
     }
