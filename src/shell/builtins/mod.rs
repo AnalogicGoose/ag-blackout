@@ -7,6 +7,7 @@ mod network;
 mod process;
 mod contracts;
 mod recon;
+mod privilege;
 
 use std::collections::HashMap;
 
@@ -59,6 +60,8 @@ pub fn table() -> HashMap<&'static str, CommandFn> {
     m.insert("scan", recon::scan);
     m.insert("intel", recon::intel);
     m.insert("help", help);
+    m.insert("su", privilege::su);
+    m.insert("sudo", privilege::sudo);
     m
 }
 
@@ -113,6 +116,8 @@ pub(super) fn help_text(name: &str) -> String {
         "scan" => "scan - probe a device on the network\nUsage: scan <hostname>\n\nAlways reports reachability. Also lists services and versions once nmap is installed on the device you're currently at.\n",
         "intel" => "intel - review what you've discovered so far\nUsage: intel\n\nLists known hosts and credentials recorded during play.\n",
         "help" => "help - list every available command\nUsage: help\n\nRun '<command> --help' or '<command> -h' for a command's full usage.\n",
+        "su" => "su - switch to another user on the active device\nUsage: su <user> <password>\n",
+        "sudo" => "sudo - run one builtin as root\nUsage: sudo <command> [args...]\n\nPrompts for the caller's password without echoing it. The original identity is restored afterward.\n",
         _ => return format!("{name}: no help available\n"),
     };
     text.to_string()

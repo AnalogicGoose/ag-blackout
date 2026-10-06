@@ -7,7 +7,7 @@ use ratatui::text::{Line, Span};
 use ratatui::Terminal;
 
 use crate::filesystem::VirtualPath;
-use crate::shell::{builtins, scenario, Shell};
+use crate::shell::{builtins, parser, scenario, LineResult, Shell};
 
 use super::render;
 
@@ -49,6 +49,8 @@ pub struct App {
     search_history_index: Option<usize>,
     saved_input: String,
     saved_cursor: usize,
+    pending_sudo: Option<String>,
+    sudo_password: String,
 }
 
 impl App {
@@ -68,6 +70,8 @@ impl App {
             search_history_index: None,
             saved_input: String::new(),
             saved_cursor: 0,
+            pending_sudo: None,
+            sudo_password: String::new(),
         };
         app.push_plain("AG Linux 1.0.0 (Blackbird) — AnalogicGoose");
         app.push_plain("Type 'contracts' to see available jobs, 'contracts accept <id>' to take one.");
@@ -465,17 +469,30 @@ impl App {
             return;
         }
 
+        let needs_sudo_prompt = parser::parse(trimmed, &self.shell.context.env)
+            .ok()
+            .is_some_and(|pipeline| {
+                if pipeline.stages.len() != 1 {
+                    return false;
+                }
+                let stage = &pipeline.stages[0];
+                stage.redirections.is_empty()
+                    && stage.argv.first().map(String::as_str) == Some("sudo")
+                    && stage.argv.len() > 1
+                    && !matches!(stage.argv[1].as_str(), "-h" | "--help")
+            });
+
+        if needs_sudo_prompt {
+            let device = self.shell.active_device();
+            if device.sudoers.permits(&device.users, self.shell.context.uid) {
+                self.pending_sudo = Some(trimmed.to_string());
+                return;
+            }
+        }
+
         let balance_before = self.shell.economy.balance();
         let result = self.shell.execute_line(trimmed);
-        for line in result.stdout.lines() {
-            self.push_plain(line.to_string());
-        }
-        for line in result.stderr.lines() {
-            self.lines.push(Line::from(Span::styled(line.to_string(), Style::default().fg(Color::Red))));
-        }
-        if self.shell.economy.balance() != balance_before {
-            self.push_plain(format!("Contract complete — balance: ${}", self.shell.economy.balance()));
-        }
+        self.show_result(result, balance_before);
     }
 
     fn toggle_scroll_mode(&mut self) {
@@ -527,6 +544,11 @@ impl App {
 
     pub fn handle_key(&mut self, key: KeyEvent) {
         if key.kind != KeyEventKind::Press {
+            return;
+        }
+
+        if self.pending_sudo.is_some() {
+            self.handle_sudo_password_key(key);
             return;
         }
 
@@ -627,6 +649,66 @@ impl App {
             _ => {}
         }
     }
+
+    pub fn sudo_prompt(&self) -> Option<String> {
+        self.pending_sudo.as_ref()?;
+        let user = self
+            .shell
+            .active_device()
+            .users
+            .whoami(self.shell.context.uid)
+            .unwrap_or("unknown");
+        Some(format!("[sudo] password for {user}: "))
+    }
+
+    fn show_result(&mut self, result: LineResult, balance_before: i64) {
+        for line in result.stdout.lines() {
+            self.push_plain(line.to_string());
+        }
+        for line in result.stderr.lines() {
+            self.lines.push(Line::from(Span::styled(
+                line.to_string(),
+                Style::default().fg(Color::Red),
+            )));
+        }
+        if self.shell.economy.balance() != balance_before {
+            self.push_plain(format!(
+                "Contract complete — balance: ${}",
+                self.shell.economy.balance()
+            ));
+        }
+    }
+
+    fn handle_sudo_password_key(&mut self, key: KeyEvent) {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        match key.code {
+            KeyCode::Enter => {
+                let prompt = self.sudo_prompt().unwrap();
+                self.push_plain(prompt);
+
+                let command = self.pending_sudo.take().unwrap();
+                let password = std::mem::take(&mut self.sudo_password);
+                let balance_before = self.shell.economy.balance();
+                let result = self.shell.execute_sudo(&command, &password);
+                self.show_result(result, balance_before);
+            }
+            KeyCode::Esc => {
+                self.pending_sudo = None;
+                self.sudo_password.clear();
+                self.push_plain("^C");
+            }
+            KeyCode::Char('c') if ctrl => {
+                self.pending_sudo = None;
+                self.sudo_password.clear();
+                self.push_plain("^C");
+            }
+            KeyCode::Backspace => {
+                self.sudo_password.pop();
+            }
+            KeyCode::Char(c) if !ctrl => self.sudo_password.push(c),
+            _ => {}
+        }
+    }
 }
 
 impl Default for App {
@@ -690,6 +772,45 @@ mod tests {
     fn submit_line(app: &mut App, s: &str) {
         type_str(app, s);
         app.handle_key(key(KeyCode::Enter));
+    }
+
+    #[test]
+    fn sudo_prompts_after_the_command_without_echoing_or_saving_the_password() {
+        let mut app = App::new();
+        app.shell.execute_line("su admin admin123");
+
+        submit_line(&mut app, "sudo whoami");
+        assert_eq!(app.sudo_prompt().as_deref(), Some("[sudo] password for admin: "));
+        type_str(&mut app, "admin123");
+        assert!(app.input.is_empty());
+        assert_eq!(app.history.last().map(String::as_str), Some("sudo whoami"));
+        assert!(!app.lines.iter().any(|line| line.spans.iter().any(|span| span.content.contains("admin123"))));
+
+        let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(80, 20)).unwrap();
+        terminal.draw(|frame| render::draw(frame, &app)).unwrap();
+        let screen = terminal.backend().buffer().content().iter().map(|cell| cell.symbol()).collect::<Vec<_>>().join("");
+        assert!(screen.contains("[sudo] password for admin:"));
+        assert!(!screen.contains("admin123"));
+
+        app.handle_key(key(KeyCode::Enter));
+        assert!(app.sudo_prompt().is_none());
+        assert!(app.lines.iter().any(|line| line.spans.iter().any(|span| span.content == "root")));
+        assert_eq!(app.shell.execute_line("whoami").stdout.trim(), "admin");
+        assert!(!app.lines.iter().any(|line| line.spans.iter().any(|span| span.content.contains("admin123"))));
+    }
+
+    #[test]
+    fn sudo_password_prompt_can_be_cancelled_without_running_the_command() {
+        let mut app = App::new();
+        app.shell.execute_line("su admin admin123");
+        submit_line(&mut app, "sudo whoami");
+        type_str(&mut app, "admin123");
+
+        app.handle_key(key(KeyCode::Esc));
+        assert!(app.sudo_prompt().is_none());
+        assert!(app.sudo_password.is_empty());
+        assert!(!app.lines.iter().any(|line| line.spans.iter().any(|span| span.content == "root")));
+        assert_eq!(app.shell.execute_line("whoami").stdout.trim(), "admin");
     }
 
     #[test]

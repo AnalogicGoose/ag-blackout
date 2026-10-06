@@ -271,6 +271,84 @@ impl Shell {
         }
         f(self, &argv[1..], stdin)
     }
+
+    pub(crate) fn run_as(
+        &mut self,
+        context: ExecutionContext,
+        argv: &[String],
+        stdin: Option<&str>,
+    ) -> CommandOutput {
+        let previous = std::mem::replace(&mut self.context, context);
+        let output = self.run_command(argv, stdin);
+        self.context = previous;
+        output
+    }
+
+    pub fn execute_sudo(&mut self, line: &str, password: &str) -> LineResult {
+        let pipeline = match parser::parse(line, &self.context.env) {
+            Ok(pipeline) => pipeline,
+            Err(error) => {
+                return LineResult {
+                    stdout: String::new(),
+                    stderr: format!("sudo: {error}\n"),
+                    exit_code: 2,
+                }
+            }
+        };
+
+        if pipeline.stages.len() != 1 || !pipeline.stages[0].redirections.is_empty() {
+            return LineResult {
+                stdout: String::new(),
+                stderr: "sudo: pipelines and redirections are not supported\n".into(),
+                exit_code: 2,
+            };
+        }
+
+        let argv = &pipeline.stages[0].argv;
+        if argv.first().map(String::as_str) != Some("sudo") || argv.len() < 2 {
+            return LineResult {
+                stdout: String::new(),
+                stderr: "sudo: usage: sudo <command> [args...]\n".into(),
+                exit_code: 2,
+            };
+        }
+
+        let command = &argv[1..];
+        if matches!(
+            command[0].as_str(),
+            "connect" | "disconnect" | "su" | "sudo"
+        ) {
+            return LineResult {
+                stdout: String::new(),
+                stderr: format!("sudo: cannot run {}\n", command[0]),
+                exit_code: 1,
+            };
+        }
+
+        let context = match crate::system::sudo(
+            &self.active_device().users,
+            &self.active_device().sudoers,
+            &self.context,
+            password,
+            None,
+        ) {
+            Ok(context) => context,
+            Err(error) => {
+                return LineResult {
+                    stdout: String::new(),
+                    stderr: format!("sudo: {error}\n"),
+                    exit_code: 1,
+                };
+            }
+        };
+
+        let output = self.run_as(context, command, None);
+        LineResult {
+            stdout: output.stdout,
+            stderr: output.stderr,
+            exit_code: output.exit_code,
+        }
+    }
 }
 
 #[cfg(test)]

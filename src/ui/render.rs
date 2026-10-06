@@ -23,8 +23,12 @@ pub fn draw(frame: &mut Frame, app: &App) {
         (full_area, None)
     };
 
-    let prompt = app.prompt_string();
-    let input_line = if app.mode == AppMode::ReverseSearch {
+    let sudo_prompt = app.sudo_prompt();
+    let prompt = sudo_prompt.clone().unwrap_or_else(|| app.prompt_string());
+    let input_line = if sudo_prompt.is_some() {
+        // The password stays in App's private buffer and is never drawn.
+        Line::from(Span::styled(prompt.clone(), Style::default().fg(Color::Yellow)))
+    } else if app.mode == AppMode::ReverseSearch {
         // Bash-style: the normal prompt is replaced by the search prompt
         // while searching, showing whichever history entry currently matches.
         Line::from(vec![
